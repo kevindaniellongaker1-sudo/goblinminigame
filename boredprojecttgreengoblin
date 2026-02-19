@@ -1,0 +1,110 @@
+using System.Collections;
+using System.Net;
+
+string player = "Goblin Slayer";
+int playerHP = new Random().Next(3,13);;
+string goblin = "Green Goblin";
+int goblinHP = new Random().Next(2,9);
+Random target = new Random();
+int DodgeNumber = target.Next(1,7);
+Random attack = new Random();
+int AttackNumber = attack.Next(1,7);
+Random damage = new Random();
+int DamageNumberGoblin = damage.Next(1,7);
+int DamageNumberPlayer = damage.Next(1,9);
+int PlayerAttack()
+{
+    if (AttackNumber >= DodgeNumber)
+    {
+        Console.WriteLine($" You hit the {goblin}!");
+        goblinHP -= DamageNumberPlayer;
+        Console.WriteLine($"You dealt {DamageNumberPlayer} damage to the {goblin}");
+    }
+    else
+    {
+        Console.WriteLine("You miss!!!");
+    };
+    return AttackNumber;
+};
+int GoblinAttack() {
+    if (AttackNumber >= DodgeNumber)
+    {
+        Console.WriteLine($"{goblin} attacks you {AttackNumber}");
+        playerHP -= DamageNumberGoblin;
+        Console.WriteLine($"You took {DamageNumberGoblin} damage!");
+    }
+    else
+    {
+        Console.WriteLine($"{goblin} missed the attack!");
+    }
+    return AttackNumber;
+};
+Console.WriteLine($"{player} encounters a {goblin}!");
+
+            while (playerHP > 0 && goblinHP > 0)
+            {
+                Console.WriteLine("What do you want to do? (attack, run, healing potion, defend, grapple)");
+               string action = Console.ReadLine().ToLower();
+                switch (action)
+                {
+                    case "attack":
+                        PlayerAttack();
+                        GoblinAttack();
+                        break;
+                    case "run":
+                        if (DodgeNumber >= 4)
+                        {
+                            Console.WriteLine($"you successfully run away!!");
+                            break;
+                        }
+                        else
+                        {
+                            GoblinAttack();
+                            Console.WriteLine($"you failed to run away!!"); 
+                        }
+                        break;
+                    case "healing potion":
+                        Random Heal = new Random();
+                        int HealNumber = Heal.Next(1,7);
+                        playerHP += HealNumber;
+                        Console.WriteLine($"You used a healing potion and recovered {HealNumber} HP!");
+                        Console.WriteLine($"You have {playerHP} HP remaining.");
+                        GoblinAttack();
+                        break;
+                    case "defend":
+                        if (DodgeNumber * 2 >= AttackNumber)
+                        {
+                            Console.WriteLine($"You successfully defended against the attack!");
+                            break;
+                        }
+                        else
+                        {
+                            playerHP -= DamageNumberGoblin;
+                            Console.WriteLine($"You took {DamageNumberGoblin} damage!");
+                            Console.WriteLine($"You have {playerHP} HP remaining.");
+                            break;
+                         }
+                    case "grapple":
+                    if (AttackNumber >= DodgeNumber)
+                    {
+                        Console.WriteLine($"You successfully grappled the {goblin}!");
+                        goblinHP -= DamageNumberPlayer * 2;
+                        Console.WriteLine($"You dealt {DamageNumberPlayer *2} damage to the {goblin}!");
+                    }
+                    else
+                    {
+                         Console.WriteLine($"{goblin} broke free from your grapple! gaining free attack!");
+                         GoblinAttack();
+                     } break;
+                     default:
+                         Console.WriteLine("Invalid action. Please try again.");
+                         break;}
+            }
+            if (playerHP <= 0)
+            {
+                Console.WriteLine("You have been defeated by the goblin...");
+            }
+            else if (goblinHP <= 0)
+            {
+                Console.WriteLine($"Congratulations! You have defeated the {goblin}!");
+            }
