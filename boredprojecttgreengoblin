@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 var rng = new Random();
@@ -9,6 +10,18 @@ int groupsDefeated = 0;
 Console.WriteLine("══════════════════════════════════");
 Console.WriteLine("          GOBLIN SLAYER           ");
 Console.WriteLine("══════════════════════════════════");
+
+if (File.Exists("goblinslayer.sav"))
+{
+    Console.Write("\nSave file found! [L]oad it or start [N]ew game? ");
+    string lc = (Console.ReadLine() ?? "l").Trim().ToLower();
+    if (!lc.StartsWith("n"))
+    {
+        if (TryLoadGame(player))
+            Console.WriteLine($"  Loaded! Level {player.Level}, HP {player.HP}/{player.MaxHP}, Groups defeated: {groupsDefeated}");
+    }
+}
+
 Console.WriteLine($"\nYou are {player.Name}!");
 Console.WriteLine($"HP: {player.HP}/{player.MaxHP}\n");
 
@@ -23,7 +36,8 @@ while (true)
     Console.WriteLine($" GROUP {waveNum}: {DescribeGroup(group)}");
     Console.WriteLine($"──────────────────────────────────");
 
-    bool survived = new CombatSession(player, group, rng, XpThreshold, GainXP).Run();
+    var session = new CombatSession(player, group, rng, XpThreshold, GainXP);
+    bool survived = session.Run();
 
     if (!survived)
     {
@@ -36,6 +50,12 @@ while (true)
     Console.WriteLine($"\n✓ Group {groupsDefeated} cleared!  HP: {player.HP}/{player.MaxHP}  XP: {player.XP}  Level: {player.Level}");
     while (player.PendingFeats > 0) SelectFeats(player);
 
+    if (session.PlayerFled)
+    {
+        SaveGame(player, groupsDefeated);
+        Console.WriteLine("  (Auto-saved after fleeing.)");
+    }
+
     Console.WriteLine("\n[1] Move forward  [2] Rest and recover HP  [3] Go home");
     Console.Write("Choice: ");
     string next = (Console.ReadLine() ?? "1").Trim().ToLower();
@@ -43,6 +63,7 @@ while (true)
     if (next is "3" or "home" or "quit" or "q" or "go home")
     {
         Console.WriteLine($"\nYou return home! Groups defeated: {groupsDefeated}  Level: {player.Level}. Well done!");
+        SaveGame(player, groupsDefeated);
         break;
     }
     if (next is "2" or "rest" or "heal")
@@ -321,6 +342,98 @@ void LearnSpell(Player p)
     else Console.WriteLine("  Invalid.");
 }
 
+void SaveGame(Player p, int groups)
+{
+    var lines = new List<string>
+    {
+        $"Name={p.Name}",
+        $"HP={p.HP}", $"MaxHP={p.MaxHP}",
+        $"MinAttack={p.MinAttack}", $"MaxAttack={p.MaxAttack}",
+        $"MinDamage={p.MinDamage}", $"MaxDamage={p.MaxDamage}",
+        $"MinDodge={p.MinDodge}", $"MaxDodge={p.MaxDodge}",
+        $"MinGrapple={p.MinGrapple}", $"MaxGrapple={p.MaxGrapple}",
+        $"MinGrappleDmg={p.MinGrappleDmg}", $"MaxGrappleDmg={p.MaxGrappleDmg}",
+        $"MinBlock={p.MinBlock}", $"MaxBlock={p.MaxBlock}",
+        $"MinParry={p.MinParry}", $"MaxParry={p.MaxParry}",
+        $"MinBardSong={p.MinBardSong}", $"MaxBardSong={p.MaxBardSong}",
+        $"MinPowerAtk={p.MinPowerAtk}", $"MaxPowerAtk={p.MaxPowerAtk}",
+        $"MinLimbBreak={p.MinLimbBreak}", $"MaxLimbBreak={p.MaxLimbBreak}",
+        $"MinPotionHeal={p.MinPotionHeal}", $"MaxPotionHeal={p.MaxPotionHeal}",
+        $"SavedStatPoints={p.SavedStatPoints}",
+        $"GearPointsAvailable={p.GearPointsAvailable}",
+        $"AdditionalActions={p.AdditionalActions}",
+        $"ArmorDamageReduction={p.ArmorDamageReduction}",
+        $"RingletBonus={p.RingletBonus}",
+        $"Level={p.Level}", $"XP={p.XP}", $"PendingFeats={p.PendingFeats}",
+        $"HasGoblinSword={p.HasGoblinSword}",
+        $"OffhandMaxDamage={p.OffhandMaxDamage}",
+        $"Feats={string.Join("|", p.Feats)}",
+        $"FeatStacks={string.Join("|", p.FeatStacks.Select(kv => $"{kv.Key}:{kv.Value}"))}",
+        $"GearCounts={string.Join("|", p.GearCounts.Select(kv => $"{kv.Key}:{kv.Value}"))}",
+        $"KnownSpells={string.Join("|", p.KnownSpells)}",
+        $"GroupsDefeated={groups}",
+    };
+    File.WriteAllLines("goblinslayer.sav", lines);
+    Console.WriteLine("  ✓ Game saved to goblinslayer.sav");
+}
+
+bool TryLoadGame(Player p)
+{
+    try
+    {
+        var dict = File.ReadAllLines("goblinslayer.sav")
+            .Where(l => l.Contains('='))
+            .ToDictionary(
+                l => l[..l.IndexOf('=')],
+                l => l[(l.IndexOf('=') + 1)..]);
+
+        string G(string k) => dict.GetValueOrDefault(k, "");
+        int I(string k, int def = 0) => int.TryParse(G(k), out int v) ? v : def;
+        bool B(string k) => G(k) == "True";
+
+        p.Name = G("Name");
+        p.HP = I("HP"); p.MaxHP = I("MaxHP");
+        p.MinAttack = I("MinAttack"); p.MaxAttack = I("MaxAttack");
+        p.MinDamage = I("MinDamage"); p.MaxDamage = I("MaxDamage");
+        p.MinDodge = I("MinDodge"); p.MaxDodge = I("MaxDodge");
+        p.MinGrapple = I("MinGrapple"); p.MaxGrapple = I("MaxGrapple");
+        p.MinGrappleDmg = I("MinGrappleDmg"); p.MaxGrappleDmg = I("MaxGrappleDmg");
+        p.MinBlock = I("MinBlock"); p.MaxBlock = I("MaxBlock");
+        p.MinParry = I("MinParry"); p.MaxParry = I("MaxParry");
+        p.MinBardSong = I("MinBardSong"); p.MaxBardSong = I("MaxBardSong");
+        p.MinPowerAtk = I("MinPowerAtk"); p.MaxPowerAtk = I("MaxPowerAtk");
+        p.MinLimbBreak = I("MinLimbBreak"); p.MaxLimbBreak = I("MaxLimbBreak");
+        p.MinPotionHeal = I("MinPotionHeal"); p.MaxPotionHeal = I("MaxPotionHeal");
+        p.SavedStatPoints = I("SavedStatPoints");
+        p.GearPointsAvailable = I("GearPointsAvailable");
+        p.AdditionalActions = I("AdditionalActions");
+        p.ArmorDamageReduction = I("ArmorDamageReduction");
+        p.RingletBonus = I("RingletBonus");
+        p.Level = I("Level"); p.XP = I("XP"); p.PendingFeats = I("PendingFeats");
+        p.HasGoblinSword = B("HasGoblinSword");
+        p.OffhandMaxDamage = I("OffhandMaxDamage");
+
+        p.Feats = G("Feats").Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
+        p.FeatStacks = G("FeatStacks").Split('|', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Split(':'))
+            .Where(a => a.Length == 2 && int.TryParse(a[1], out _))
+            .ToDictionary(a => a[0], a => int.Parse(a[1]));
+        p.GearCounts = G("GearCounts").Split('|', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Split(':'))
+            .Where(a => a.Length == 2 && int.TryParse(a[1], out _))
+            .ToDictionary(a => a[0], a => int.Parse(a[1]));
+        p.KnownSpells = G("KnownSpells").Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+        groupsDefeated = I("GroupsDefeated");
+        return true;
+    }
+    catch
+    {
+        Console.WriteLine("  Save file corrupted. Starting fresh.");
+        return false;
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLASSES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -587,6 +700,7 @@ class CombatSession
     readonly Action<int> GainXP;
     List<Enemy> Active;
     List<(List<Enemy> batch, int turns)> Pending = new();
+    public bool PlayerFled = false;
 
     public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp)
     {
@@ -662,7 +776,7 @@ class CombatSession
             foreach (var e in Active.Where(x => x.Alive)) e.HpAtTurnStart = e.HP;
 
             bool fled = PlayerTurn();
-            if (fled) { Console.WriteLine("You escaped!"); return true; }
+            if (fled) { PlayerFled = true; Console.WriteLine("You escaped!"); return true; }
             if (P.HP <= 0) break;
 
             alive = Active.Where(e => e.Alive).ToList();
