@@ -49,7 +49,7 @@ while (true)
     {
         int dice = 1 + player.GetFeatStacks("Potion Brewer");
         int recovered = 0;
-        for (int d = 0; d < dice; d++) recovered += rng.Next(1, 7 + player.HealBonus);
+        for (int d = 0; d < dice; d++) recovered += rng.Next(player.MinPotionHeal, player.MaxPotionHeal + 1);
         recovered = Math.Min(recovered, player.MaxHP - player.HP);
         player.HP += recovered;
         Console.WriteLine($"You rest and recover {recovered} HP. ({player.HP}/{player.MaxHP})");
@@ -111,32 +111,18 @@ void GainXP(int xp)
         player.Level++;
         Console.WriteLine($"\n★★★ LEVEL UP! You are now Level {player.Level}! ★★★");
 
-        if (player.Level >= 2 && player.Level % 2 == 0)
+        if (player.Level >= 2)
         {
-            Console.Write($"  Choose +1 [A]ttack Max or +1 [D]amage Max: ");
-            string pick = (Console.ReadLine() ?? "a").Trim().ToLower();
-            if (pick.StartsWith("d")) { player.MaxDamage++; Console.WriteLine($"  Max Damage → {player.MaxDamage}"); }
-            else { player.MaxAttack++; Console.WriteLine($"  Max Attack → {player.MaxAttack}"); }
-            int hpB = (int)(player.MaxHP * 0.5);
-            player.MaxHP += hpB;
-            player.HP = Math.Min(player.HP + hpB, player.MaxHP);
-            Console.WriteLine($"  Max HP +{hpB} → {player.MaxHP}");
+            player.SavedStatPoints++;
+            Console.WriteLine($"  Stat point gained! (Total saved: {player.SavedStatPoints})");
+            SpendStatPoints(player);
         }
 
-        if (player.Level >= 3 && player.Level % 3 == 0)
+        if (player.Level % 5 == 0)
         {
-            player.MaxDodge++;
-            player.HealBonus++;
-            int hpB = (int)(player.MaxHP * 0.25);
-            player.MaxHP += hpB;
-            player.HP = Math.Min(player.HP + hpB, player.MaxHP);
-            Console.WriteLine($"  Dodge Max +1 → {player.MaxDodge}, Heal +1, HP +{hpB} → {player.MaxHP}");
-        }
-
-        if ((player.Level - 1) % 4 == 0)
-        {
-            player.PendingFeats++;
-            Console.WriteLine($"  Feat available!");
+            player.GearPointsAvailable++;
+            Console.WriteLine($"  Gear point earned! (Level {player.Level} milestone)");
+            SpendGearPoints(player);
         }
     }
 }
@@ -181,6 +167,120 @@ void SelectFeats(Player p)
     }
 }
 
+void SpendStatPoints(Player p)
+{
+    while (p.SavedStatPoints > 0)
+    {
+        Console.WriteLine($"\n═══ STAT POINTS: {p.SavedStatPoints} available ═══");
+        Console.WriteLine("  ── 1 point: max stat ──");
+        Console.WriteLine($"  [1]  Max Dodge→{p.MaxDodge+1}     [2]  Max Attack→{p.MaxAttack+1}     [3]  Max Grapple→{p.MaxGrapple+1}    [4]  Max Block→{p.MaxBlock+1}");
+        Console.WriteLine($"  [5]  Max Damage→{p.MaxDamage+1}    [6]  Max HP→{p.MaxHP+1}         [7]  Max Parry→{p.MaxParry+1}      [8]  Max Bard Song→{p.MaxBardSong+1}");
+        Console.WriteLine($"  [9]  Max Grapple Dmg→{p.MaxGrappleDmg+1}  [10] Max Potion Heal→{p.MaxPotionHeal+1}  [11] Max Power Atk→{p.MaxPowerAtk+1}  [12] Max Limb Break→{p.MaxLimbBreak+1}");
+        if (p.SavedStatPoints >= 2)
+        {
+            Console.WriteLine("  ── 2 points: min stat ──");
+            Console.WriteLine($"  [13] Min Dodge→{p.MinDodge+1}  [14] Min Attack→{p.MinAttack+1}  [15] Min Grapple→{p.MinGrapple+1}  [16] Min Block→{p.MinBlock+1}");
+            Console.WriteLine($"  [17] Min Damage→{p.MinDamage+1}  [18] Min Parry→{p.MinParry+1}  [19] Min Bard Song→{p.MinBardSong+1}  [20] Min Grapple Dmg→{p.MinGrappleDmg+1}");
+            Console.WriteLine($"  [21] Min Power Atk→{p.MinPowerAtk+1}  [22] Min Limb Break→{p.MinLimbBreak+1}  [23] Min Potion Heal→{p.MinPotionHeal+1}");
+        }
+        if (p.SavedStatPoints >= 3)
+            Console.WriteLine("  ── 3 points: [24] Extra action/turn   [25] Gear point   [26] Keep saving (exit)");
+        if (p.SavedStatPoints >= 4)
+            Console.WriteLine("  ── 4 points: [27] Pick a feat");
+        Console.Write("  Choice ([S]ave all for later): ");
+        string raw = (Console.ReadLine() ?? "s").Trim().ToLower();
+        if (raw == "s" || raw == "save") break;
+        if (!int.TryParse(raw, out int ch)) { Console.WriteLine("  Invalid."); continue; }
+        bool exitLoop = false;
+        switch (ch)
+        {
+            case 1:  p.MaxDodge++;      p.SavedStatPoints--;  Console.WriteLine($"  Max Dodge → {p.MaxDodge}"); break;
+            case 2:  p.MaxAttack++;     p.SavedStatPoints--;  Console.WriteLine($"  Max Attack → {p.MaxAttack}"); break;
+            case 3:  p.MaxGrapple++;    p.SavedStatPoints--;  Console.WriteLine($"  Max Grapple → {p.MaxGrapple}"); break;
+            case 4:  p.MaxBlock++;      p.SavedStatPoints--;  Console.WriteLine($"  Max Block → {p.MaxBlock}"); break;
+            case 5:  p.MaxDamage++;     p.SavedStatPoints--;  Console.WriteLine($"  Max Damage → {p.MaxDamage}"); break;
+            case 6:  p.MaxHP++;         p.SavedStatPoints--;  Console.WriteLine($"  Max HP → {p.MaxHP}"); break;
+            case 7:  p.MaxParry++;      p.SavedStatPoints--;  Console.WriteLine($"  Max Parry → {p.MaxParry}"); break;
+            case 8:  p.MaxBardSong++;   p.SavedStatPoints--;  Console.WriteLine($"  Max Bard Song → {p.MaxBardSong}"); break;
+            case 9:  p.MaxGrappleDmg++; p.SavedStatPoints--;  Console.WriteLine($"  Max Grapple Dmg → {p.MaxGrappleDmg}"); break;
+            case 10: p.MaxPotionHeal++; p.SavedStatPoints--;  Console.WriteLine($"  Max Potion Heal → {p.MaxPotionHeal}"); break;
+            case 11: p.MaxPowerAtk++;   p.SavedStatPoints--;  Console.WriteLine($"  Max Power Atk → {p.MaxPowerAtk}"); break;
+            case 12: p.MaxLimbBreak++;  p.SavedStatPoints--;  Console.WriteLine($"  Max Limb Break → {p.MaxLimbBreak}"); break;
+            case 13 when p.SavedStatPoints >= 2: p.MinDodge++;      p.SavedStatPoints -= 2; Console.WriteLine($"  Min Dodge → {p.MinDodge}"); break;
+            case 14 when p.SavedStatPoints >= 2: p.MinAttack++;     p.SavedStatPoints -= 2; Console.WriteLine($"  Min Attack → {p.MinAttack}"); break;
+            case 15 when p.SavedStatPoints >= 2: p.MinGrapple++;    p.SavedStatPoints -= 2; Console.WriteLine($"  Min Grapple → {p.MinGrapple}"); break;
+            case 16 when p.SavedStatPoints >= 2: p.MinBlock++;      p.SavedStatPoints -= 2; Console.WriteLine($"  Min Block → {p.MinBlock}"); break;
+            case 17 when p.SavedStatPoints >= 2: p.MinDamage++;     p.SavedStatPoints -= 2; Console.WriteLine($"  Min Damage → {p.MinDamage}"); break;
+            case 18 when p.SavedStatPoints >= 2: p.MinParry++;      p.SavedStatPoints -= 2; Console.WriteLine($"  Min Parry → {p.MinParry}"); break;
+            case 19 when p.SavedStatPoints >= 2: p.MinBardSong++;   p.SavedStatPoints -= 2; Console.WriteLine($"  Min Bard Song → {p.MinBardSong}"); break;
+            case 20 when p.SavedStatPoints >= 2: p.MinGrappleDmg++; p.SavedStatPoints -= 2; Console.WriteLine($"  Min Grapple Dmg → {p.MinGrappleDmg}"); break;
+            case 21 when p.SavedStatPoints >= 2: p.MinPowerAtk++;   p.SavedStatPoints -= 2; Console.WriteLine($"  Min Power Atk → {p.MinPowerAtk}"); break;
+            case 22 when p.SavedStatPoints >= 2: p.MinLimbBreak++;  p.SavedStatPoints -= 2; Console.WriteLine($"  Min Limb Break → {p.MinLimbBreak}"); break;
+            case 23 when p.SavedStatPoints >= 2: p.MinPotionHeal++; p.SavedStatPoints -= 2; Console.WriteLine($"  Min Potion Heal → {p.MinPotionHeal}"); break;
+            case 24 when p.SavedStatPoints >= 3: p.AdditionalActions++; p.SavedStatPoints -= 3; Console.WriteLine($"  +1 action/turn! Bonus actions: {p.AdditionalActions}"); break;
+            case 25 when p.SavedStatPoints >= 3: p.GearPointsAvailable++; p.SavedStatPoints -= 3; Console.WriteLine("  Gear point gained!"); SpendGearPoints(p); break;
+            case 26 when p.SavedStatPoints >= 3: exitLoop = true; break;
+            case 27 when p.SavedStatPoints >= 4: p.SavedStatPoints -= 4; p.PendingFeats++; SelectFeats(p); break;
+            default: Console.WriteLine("  Invalid choice or insufficient points."); break;
+        }
+        if (exitLoop) break;
+    }
+    if (p.SavedStatPoints > 0) Console.WriteLine($"  {p.SavedStatPoints} stat point(s) saved for later.");
+}
+
+void SpendGearPoints(Player p)
+{
+    while (p.GearPointsAvailable > 0)
+    {
+        Console.WriteLine($"\n═══ GEAR POINTS: {p.GearPointsAvailable} available (each item up to 3×) ═══");
+        var items = new (string Key, string Desc, Action<Player> Apply)[]
+        {
+            ("Armor",         "-1 incoming damage per point",                           pl => { pl.ArmorDamageReduction++; Console.WriteLine($"  Armor: -{pl.ArmorDamageReduction} incoming dmg"); }),
+            ("Staff",         "Main damage min and max +1 (non-lethal style)",          pl => { pl.MinDamage++; pl.MaxDamage++; Console.WriteLine($"  Staff: dmg {pl.MinDamage}-{pl.MaxDamage}"); }),
+            ("Blade",         "Melee damage min and max +1",                            pl => { pl.MinDamage++; pl.MaxDamage++; Console.WriteLine($"  Blade: dmg {pl.MinDamage}-{pl.MaxDamage}"); }),
+            ("Brass Ringlets","Non-weapon (kick/headbutt) damage bonus +1",             pl => { pl.RingletBonus++; Console.WriteLine($"  Brass Ringlets: unarmed bonus +{pl.RingletBonus}"); }),
+            ("Instrument",    "Bard song min and max +1",                               pl => { pl.MinBardSong++; pl.MaxBardSong++; Console.WriteLine($"  Instrument: bard song {pl.MinBardSong}-{pl.MaxBardSong}"); }),
+            ("Silk",          "Dodge min and max +1",                                   pl => { pl.MinDodge++; pl.MaxDodge++; Console.WriteLine($"  Silk: dodge {pl.MinDodge}-{pl.MaxDodge}"); }),
+            ("Arm Band",      "Block min and max +1",                                   pl => { pl.MinBlock++; pl.MaxBlock++; Console.WriteLine($"  Arm Band: block {pl.MinBlock}-{pl.MaxBlock}"); }),
+            ("Strength Band", "Grapple and grapple damage min and max +1",              pl => { pl.MinGrapple++; pl.MaxGrapple++; pl.MinGrappleDmg++; pl.MaxGrappleDmg++; Console.WriteLine($"  Strength Band: grapple {pl.MinGrapple}-{pl.MaxGrapple}, dmg {pl.MinGrappleDmg}-{pl.MaxGrappleDmg}"); }),
+            ("Fencing",       "Parry min and max +1",                                   pl => { pl.MinParry++; pl.MaxParry++; Console.WriteLine($"  Fencing: parry {pl.MinParry}-{pl.MaxParry}"); }),
+            ("Grimoire",      "Learn one spell (Fire Blast, Chain Lightning, Frost Burst)", pl => LearnSpell(pl)),
+            ("Alchemy",       "Potion healing min and max +1",                          pl => { pl.MinPotionHeal++; pl.MaxPotionHeal++; Console.WriteLine($"  Alchemy: heal {pl.MinPotionHeal}-{pl.MaxPotionHeal}"); }),
+        };
+        var avail = items.Where(it => p.GearCounts.GetValueOrDefault(it.Key, 0) < 3).ToList();
+        for (int i = 0; i < avail.Count; i++)
+        {
+            int taken = p.GearCounts.GetValueOrDefault(avail[i].Key, 0);
+            Console.WriteLine($"  [{i+1}] {avail[i].Key} ({taken}/3) — {avail[i].Desc}");
+        }
+        Console.Write("  Choose: ");
+        if (int.TryParse(Console.ReadLine()?.Trim(), out int g) && g >= 1 && g <= avail.Count)
+        {
+            var it = avail[g - 1];
+            it.Apply(p);
+            p.GearCounts[it.Key] = p.GearCounts.GetValueOrDefault(it.Key, 0) + 1;
+            p.GearPointsAvailable--;
+        }
+        else Console.WriteLine("  Invalid.");
+    }
+}
+
+void LearnSpell(Player p)
+{
+    var allSpells = new[] { "Fire Blast", "Chain Lightning", "Frost Burst" };
+    var available = allSpells.Where(s => !p.KnownSpells.Contains(s)).ToList();
+    if (!available.Any()) { Console.WriteLine("  You already know all spells!"); return; }
+    Console.WriteLine("  Available spells:");
+    Console.WriteLine("    Fire Blast       — 4-12 dmg to 2-4 enemies; burning 1-4/action for 4-8 actions");
+    Console.WriteLine("    Chain Lightning  — 3-6 dmg to 5-11 enemies/action; self-damage if >3 actions");
+    Console.WriteLine("    Frost Burst      — 2-8 dmg to 2-8 enemies; -2 to -8 on their rolls for 2-6 actions");
+    for (int i = 0; i < available.Count; i++) Console.WriteLine($"  [{i+1}] {available[i]}");
+    Console.Write("  Learn: ");
+    if (int.TryParse(Console.ReadLine()?.Trim(), out int s) && s >= 1 && s <= available.Count)
+    { p.KnownSpells.Add(available[s - 1]); Console.WriteLine($"  ✓ Learned: {available[s - 1]}!"); }
+    else Console.WriteLine("  Invalid.");
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLASSES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -192,7 +292,20 @@ class Player
     public int MinAttack = 1, MaxAttack = 6;
     public int MinDamage = 1, MaxDamage = 9;
     public int MinDodge = 1, MaxDodge = 6;
-    public int HealBonus = 0;
+    public int MinGrapple = 1, MaxGrapple = 6;
+    public int MinGrappleDmg = 1, MaxGrappleDmg = 4;
+    public int MinBlock = 1, MaxBlock = 6;
+    public int MinParry = 1, MaxParry = 6;
+    public int MinBardSong = 1, MaxBardSong = 6;
+    public int MinPowerAtk = 4, MaxPowerAtk = 4;
+    public int MinLimbBreak = 1, MaxLimbBreak = 6;
+    public int MinPotionHeal = 1, MaxPotionHeal = 6;
+    public int SavedStatPoints = 0;
+    public int GearPointsAvailable = 0;
+    public int AdditionalActions = 0;
+    public int ArmorDamageReduction = 0;
+    public int RingletBonus = 0;
+    public int ChainLightningUses = 0;
     public int Level = 1, XP = 0, PendingFeats = 1;
     public bool Defending = false;
     public bool HasGoblinSword = false;
@@ -201,6 +314,8 @@ class Player
     public Enemy? GrappledBy = null;
     public List<string> Feats = new();
     public Dictionary<string, int> FeatStacks = new();
+    public Dictionary<string, int> GearCounts = new();
+    public List<string> KnownSpells = new();
 
     public Player(Random rng)
     {
@@ -218,7 +333,7 @@ class Player
         if (!FeatStacks.ContainsKey(name)) FeatStacks[name] = 1;
     }
 
-    public void ClearRoundEffects() { Defending = false; }
+    public void ClearRoundEffects() { Defending = false; ChainLightningUses = 0; }
 }
 
 abstract class Enemy
@@ -246,6 +361,8 @@ abstract class Enemy
     public int KOCount = 0;
     public bool XpAwarded = false;
     public int BleedDmg = 0;
+    public int BurningDmg = 0, BurningTurns = 0;
+    public int FrostPenalty = 0, FrostTurns = 0;
     public int DodgePenalty = 0;
     public int AttackPenalty = 0;
     public int WeaponDistance = 0;
@@ -266,6 +383,8 @@ abstract class Enemy
         if (Disarmed) parts.Add($"Disarmed({WeaponDistance}ft)");
         if (Grappled) parts.Add("Grappled");
         if (BleedDmg > 0) parts.Add($"Bleed({BleedDmg})");
+        if (BurningDmg > 0) parts.Add($"Burning({BurningDmg}×{BurningTurns}t)");
+        if (FrostPenalty > 0) parts.Add($"Frozen(-{FrostPenalty}/{FrostTurns}t)");
         if (Charmed) parts.Add("Charmed");
         return string.Join(" ", parts);
     }
@@ -420,6 +539,28 @@ class CombatSession
                 }
             }
 
+            // Burning
+            foreach (var e in alive.ToList())
+            {
+                if (e.BurningDmg > 0)
+                {
+                    e.HP -= e.BurningDmg;
+                    Console.WriteLine($"  {e.Name} burns for {e.BurningDmg}. HP: {e.HP}/{e.MaxHP}");
+                    e.BurningTurns--;
+                    if (e.BurningTurns <= 0) { e.BurningDmg = 0; Console.WriteLine($"  {e.Name}'s flames die out."); }
+                    if (!e.Alive) { Console.WriteLine($"  {e.Name} burns out!"); if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); } }
+                }
+            }
+            // Frost countdown
+            foreach (var e in alive.ToList())
+            {
+                if (e.FrostTurns > 0)
+                {
+                    e.FrostTurns--;
+                    if (e.FrostTurns <= 0) { e.FrostPenalty = 0; Console.WriteLine($"  {e.Name}'s frost clears."); }
+                }
+            }
+
             alive = Active.Where(e => e.Alive).ToList();
             if (!alive.Any() && !Pending.Any()) break;
 
@@ -463,7 +604,7 @@ class CombatSession
 
     bool PlayerTurn()
     {
-        int actLeft = 2;
+        int actLeft = 2 + P.AdditionalActions;
         if (P.HasFeat("Chidia")) actLeft += 2;
 
         bool fled = false;
@@ -480,8 +621,8 @@ class CombatSession
             // While grappled, auto-roll each action to break free
             if (P.IsGrappled && P.GrappledBy != null && P.GrappledBy.Alive)
             {
-                int minG = 1 + P.GetFeatStacks("Closeliner");
-                int pGr = Rng.Next(minG, 7);
+                int minG = P.MinGrapple + P.GetFeatStacks("Closeliner");
+                int pGr = Rng.Next(minG, P.MaxGrapple + 1);
                 int eGr = Rng.Next(P.GrappledBy.MinGrapple, P.GrappledBy.MaxGrapple + 1);
                 Console.WriteLine($"  [GRAPPLED by {P.GrappledBy.Name}] Break-free: your {pGr} vs their {eGr}.");
                 if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
@@ -555,10 +696,23 @@ class CombatSession
                     break;
                 }
 
+                case "cast spell":
+                {
+                    if (!P.KnownSpells.Any()) break;
+                    Console.WriteLine("  Known spells:");
+                    for (int si = 0; si < P.KnownSpells.Count; si++) Console.WriteLine($"  [{si+1}] {P.KnownSpells[si]}");
+                    Console.Write("  Cast which: ");
+                    if (int.TryParse(Console.ReadLine()?.Trim(), out int si2) && si2 >= 1 && si2 <= P.KnownSpells.Count)
+                        DoSpell(P.KnownSpells[si2 - 1], alive);
+                    else Console.WriteLine("  Invalid.");
+                    justBlocked = false;
+                    break;
+                }
+
                 case "block":
                 {
                     if (target == null) break;
-                    int bRoll = Rng.Next(1, 7);
+                    int bRoll = Rng.Next(P.MinBlock, P.MaxBlock + 1);
                     int eAtk = Rng.Next(target.MinAttack, target.MaxAttack + 1);
                     Console.WriteLine($"  Block! Roll {bRoll} vs {target.Name}'s attack {eAtk}.");
                     if (bRoll >= eAtk)
@@ -584,7 +738,7 @@ class CombatSession
                 case "parry":
                 {
                     if (blockTarget == null || !blockTarget.Alive) { Console.WriteLine("  No blocked target for parry."); continue; }
-                    int pRoll = Rng.Next(1, 7);
+                    int pRoll = Rng.Next(P.MinParry, P.MaxParry + 1);
                     int pDdg = Rng.Next(blockTarget.MinDodge, blockTarget.MaxDodge + 1);
                     Console.WriteLine($"  Parry! Roll {pRoll} vs {blockTarget.Name}'s dodge {pDdg}.");
                     if (pRoll >= pDdg)
@@ -602,7 +756,7 @@ class CombatSession
                 case "bard song":
                 {
                     int stacks = Math.Max(1, P.GetFeatStacks("Bard Song"));
-                    int songRoll = Rng.Next(1, 7) + stacks;
+                    int songRoll = Rng.Next(P.MinBardSong, P.MaxBardSong + 1) + stacks;
                     Console.WriteLine($"  Bard Song! Roll {songRoll}.");
                     foreach (var e in alive)
                     {
@@ -644,6 +798,7 @@ class CombatSession
         if (P.HasFeat("Block")) o.Add("block");
         if (P.HasFeat("Parry") && justBlocked) o.Add("parry");
         if (P.HasFeat("Bard Song")) o.Add("bard song");
+        if (P.KnownSpells.Any()) o.Add("cast spell");
         bool deadGoblin = Active.Any(e => !e.Alive && e is Goblin);
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
         return o;
@@ -683,7 +838,7 @@ class CombatSession
         }
 
         int atkPen = 0, dmgBonus = 0;
-        if (usePower) { atkPen -= 2; dmgBonus += 4; }
+        if (usePower) { atkPen -= 2; dmgBonus += Rng.Next(P.MinPowerAtk, P.MaxPowerAtk + 1); }
         if (useSunder) atkPen--;
         if (useSap) atkPen -= 2;
 
@@ -722,7 +877,7 @@ class CombatSession
             {
                 int hbA = Rng.Next(1, 7), hbD = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
                 Console.WriteLine($"  Headbutt: {hbA} vs {hbD}.");
-                if (hbA >= hbD && !EnemyBlocks(target, hbA)) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Headbutt HIT! {d} dmg."); if (!target.Alive) HandleKill(target); }
+                if (hbA >= hbD && !EnemyBlocks(target, hbA)) { int d = Rng.Next(1, 5) + P.RingletBonus; target.HP -= d; Console.WriteLine($"  Headbutt HIT! {d} dmg."); if (!target.Alive) HandleKill(target); }
                 else if (hbA < hbD) Console.WriteLine("  Headbutt MISS!");
             }
         }
@@ -738,7 +893,7 @@ class CombatSession
 
     void PerformAttack(Enemy target, int atkRoll, int minDmg, int maxDmg, int dmgBonus, bool sunder, bool disarm, bool sap)
     {
-        int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty - target.FrostPenalty;
         Console.WriteLine($"  Attack: {atkRoll} vs {target.Name}'s dodge {ddg}.");
 
         if (atkRoll < ddg)
@@ -806,7 +961,7 @@ class CombatSession
     {
         int kA = Rng.Next(1, 5), kD = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
         Console.WriteLine($"  Kick: {kA} vs {kD}.");
-        if (kA >= kD && !EnemyBlocks(target, kA)) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Kick HIT! {d} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}"); if (!target.Alive) HandleKill(target); }
+        if (kA >= kD && !EnemyBlocks(target, kA)) { int d = Rng.Next(1, 5) + P.RingletBonus; target.HP -= d; Console.WriteLine($"  Kick HIT! {d} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}"); if (!target.Alive) HandleKill(target); }
         else if (kA < kD) Console.WriteLine("  Kick MISS!");
     }
 
@@ -910,8 +1065,8 @@ class CombatSession
 
     void DoGrapple(Enemy target)
     {
-        int minG = 1 + P.GetFeatStacks("Closeliner");
-        int gRoll = Rng.Next(minG, 7);
+        int minG = P.MinGrapple + P.GetFeatStacks("Closeliner");
+        int gRoll = Rng.Next(minG, P.MaxGrapple + 1);
         int dRoll = Rng.Next(target.MinDodge, target.MaxDodge + 1);
         Console.WriteLine($"  Grapple! Roll {gRoll} vs {target.Name}'s dodge {dRoll}.");
         if (gRoll < dRoll) { Console.WriteLine("  Grapple FAILED!"); return; }
@@ -935,8 +1090,8 @@ class CombatSession
         }
         else
         {
-            int minGD = 1 + P.GetFeatStacks("Closeliner");
-            int gDmg = Rng.Next(minGD, 7);
+            int minGD = P.MinGrappleDmg + P.GetFeatStacks("Closeliner");
+            int gDmg = Rng.Next(minGD, P.MaxGrappleDmg + 1);
             target.HP -= gDmg;
             Console.WriteLine($"  Grapple damage: {gDmg} → {target.Name} HP:{target.HP}/{target.MaxHP}");
             if (!target.Alive) { HandleKill(target); return; }
@@ -946,7 +1101,7 @@ class CombatSession
             {
                 Console.Write("  Taekwondo limb break? [L]eg [A]rm [N]eck [B]ack [S]kip: ");
                 string lb = (Console.ReadLine() ?? "s").Trim().ToLower();
-                int bd = Rng.Next(P.MinDamage, P.MaxDamage + 1) * 2;
+                int bd = Rng.Next(P.MinLimbBreak, P.MaxLimbBreak + 1);
                 switch (lb.Length > 0 ? lb[0] : 's')
                 {
                     case 'l': target.HP -= bd; target.CanMove = false; Console.WriteLine($"  Leg broken! {bd} dmg. Can't walk."); break;
@@ -981,10 +1136,76 @@ class CombatSession
     {
         int dice = 1 + P.GetFeatStacks("Potion Brewer");
         int h = 0;
-        for (int d = 0; d < dice; d++) h += Rng.Next(1, 7 + P.HealBonus);
+        for (int d = 0; d < dice; d++) h += Rng.Next(P.MinPotionHeal, P.MaxPotionHeal + 1);
         h = Math.Min(h, P.MaxHP - P.HP);
         P.HP += h;
         Console.WriteLine($"  Healing potion! +{h} HP. ({P.HP}/{P.MaxHP})");
+    }
+
+    void DoSpell(string spell, List<Enemy> alive)
+    {
+        switch (spell)
+        {
+            case "Fire Blast":
+            {
+                int numTargets = Rng.Next(2, 5);
+                Console.WriteLine($"  FIRE BLAST! Engulfs {numTargets} enemies in flames.");
+                var targets = alive.OrderBy(_ => Rng.Next()).Take(numTargets).ToList();
+                int burnDmg = Rng.Next(1, 5);
+                int burnTurns = Rng.Next(4, 9);
+                foreach (var e in targets)
+                {
+                    int dmg = Rng.Next(4, 13);
+                    e.HP -= dmg;
+                    Console.WriteLine($"    {e.Name} takes {dmg} fire damage! HP:{e.HP}/{e.MaxHP}");
+                    if (!e.Alive) { HandleKill(e); continue; }
+                    e.BurningDmg = Math.Max(e.BurningDmg, burnDmg);
+                    e.BurningTurns = Math.Max(e.BurningTurns, burnTurns);
+                    Console.WriteLine($"    {e.Name} BURNING! ({burnDmg}/action × {burnTurns} actions)");
+                }
+                break;
+            }
+            case "Chain Lightning":
+            {
+                int numTargets = Math.Min(Rng.Next(5, 12), alive.Count);
+                Console.WriteLine($"  CHAIN LIGHTNING! Arcs through {numTargets} enemies.");
+                var targets = alive.OrderBy(_ => Rng.Next()).Take(numTargets).ToList();
+                foreach (var e in targets)
+                {
+                    int dmg = Rng.Next(3, 7);
+                    e.HP -= dmg;
+                    Console.WriteLine($"    {e.Name} struck for {dmg} lightning! HP:{e.HP}/{e.MaxHP}");
+                    if (!e.Alive) HandleKill(e);
+                }
+                P.ChainLightningUses++;
+                if (P.ChainLightningUses > 3)
+                {
+                    int selfDmg = Rng.Next(1, 5);
+                    P.HP -= selfDmg;
+                    Console.WriteLine($"  Channeling backlash! You take {selfDmg} damage. HP:{P.HP}/{P.MaxHP}");
+                }
+                break;
+            }
+            case "Frost Burst":
+            {
+                int numTargets = Math.Min(Rng.Next(2, 9), alive.Count);
+                Console.WriteLine($"  FROST BURST! Freezes {numTargets} enemies.");
+                var targets = alive.OrderBy(_ => Rng.Next()).Take(numTargets).ToList();
+                int frostPen = Rng.Next(2, 9);
+                int frostTurns = Rng.Next(2, 7);
+                foreach (var e in targets)
+                {
+                    int dmg = Rng.Next(2, 9);
+                    e.HP -= dmg;
+                    Console.WriteLine($"    {e.Name} takes {dmg} frost! HP:{e.HP}/{e.MaxHP}");
+                    if (!e.Alive) { HandleKill(e); continue; }
+                    e.FrostPenalty = Math.Max(e.FrostPenalty, frostPen);
+                    e.FrostTurns = Math.Max(e.FrostTurns, frostTurns);
+                    Console.WriteLine($"    {e.Name} FROZEN! (-{frostPen} on rolls for {frostTurns} turns)");
+                }
+                break;
+            }
+        }
     }
 
     // ── ENEMY TURN ────────────────────────────────────────────────────────
@@ -1217,8 +1438,8 @@ class CombatSession
         P.HP -= gDmg;
         Console.WriteLine($"  {e.Name} crushes you for {gDmg} damage! HP:{P.HP}/{P.MaxHP}");
         // Player rolls to break free each grapple action
-        int minG = 1 + P.GetFeatStacks("Closeliner");
-        int pGr = Rng.Next(minG, 7);
+        int minG = P.MinGrapple + P.GetFeatStacks("Closeliner");
+        int pGr = Rng.Next(minG, P.MaxGrapple + 1);
         int eGr = Rng.Next(e.MinGrapple, e.MaxGrapple + 1);
         Console.WriteLine($"  Break-free roll: your {pGr} vs {e.Name}'s {eGr}.");
         if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
@@ -1234,8 +1455,8 @@ class CombatSession
 
         if (choice.StartsWith("g"))
         {
-            int minG = 1 + P.GetFeatStacks("Closeliner");
-            int gRoll = Rng.Next(minG, 7);
+            int minG = P.MinGrapple + P.GetFeatStacks("Closeliner");
+            int gRoll = Rng.Next(minG, P.MaxGrapple + 1);
             int gDdg = Rng.Next(e.MinDodge, e.MaxDodge + 1) - 2;
             Console.WriteLine($"  Grapple: {gRoll} vs {e.Name}'s dodge-2 ({gDdg}).");
             if (gRoll >= gDdg)
@@ -1269,7 +1490,7 @@ class CombatSession
     void EnemyAttack(Enemy e)
     {
         if (!e.Alive || e.KnockedOut) return;
-        int eAtk = Rng.Next(e.MinAttack, e.MaxAttack + 1) - e.AttackPenalty;
+        int eAtk = Rng.Next(e.MinAttack, e.MaxAttack + 1) - e.AttackPenalty - e.FrostPenalty;
         int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
         Console.WriteLine($"  {e.Name} attacks! Roll {eAtk} vs your dodge {pDdg}.");
         if (eAtk >= pDdg)
@@ -1277,6 +1498,7 @@ class CombatSession
             int dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
             if (e.Disarmed) dmg = Math.Max(1, dmg / 2);
             if (P.Defending) dmg = Math.Max(1, dmg / 2);
+            if (P.ArmorDamageReduction > 0) dmg = Math.Max(1, dmg - P.ArmorDamageReduction);
             Console.WriteLine($"  HIT! You take {dmg} damage. HP: {P.HP - dmg}/{P.MaxHP}");
             P.HP -= dmg;
             // Double Tap off-hand
