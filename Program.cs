@@ -384,12 +384,21 @@ void AskName(Player p)
     if (!string.IsNullOrEmpty(input)) p.Name = input;
 }
 
+string GameSaveDir()
+{
+    string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+    if (string.IsNullOrEmpty(desktop) || !Directory.Exists(desktop))
+        desktop = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    string dir = Path.Combine(desktop, "OWSATH");
+    Directory.CreateDirectory(dir);
+    return dir;
+}
+
 string SaveFilePath(string name)
 {
     string safe = new string(name.Where(c => char.IsLetterOrDigit(c)).ToArray());
     if (string.IsNullOrEmpty(safe)) safe = "default";
-    Directory.CreateDirectory("saves");
-    return Path.Combine("saves", $"{safe}.sav");
+    return Path.Combine(GameSaveDir(), $"{safe}.sav");
 }
 
 void SaveGame(Player p, int groups)
@@ -488,8 +497,8 @@ bool TryLoadGame(Player p, string filePath)
 List<(string name, int wave, int level, string path)> ListSaves()
 {
     var result = new List<(string, int, int, string)>();
-    if (!Directory.Exists("saves")) return result;
-    foreach (var f in Directory.GetFiles("saves", "*.sav"))
+    string dir = GameSaveDir();
+    foreach (var f in Directory.GetFiles(dir, "*.sav").Where(f => !f.Contains("hiscores")))
     {
         try
         {
@@ -508,7 +517,7 @@ List<(string name, int wave, int level, string path)> ListSaves()
 
 void ShowHiscores()
 {
-    const string scorePath = "owsath_hiscores.sav";
+    string scorePath = Path.Combine(GameSaveDir(), "owsath_hiscores.sav");
     if (!File.Exists(scorePath)) return;
     try
     {
@@ -538,7 +547,7 @@ void ShowHiscores()
 
 void UpdateHiscores(string name, int wave, int level)
 {
-    const string scorePath = "owsath_hiscores.sav";
+    string scorePath = Path.Combine(GameSaveDir(), "owsath_hiscores.sav");
     var scores = new List<(string name, int wave, int level)>();
     if (File.Exists(scorePath))
     {
