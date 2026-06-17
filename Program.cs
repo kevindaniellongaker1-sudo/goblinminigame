@@ -175,7 +175,7 @@ string DescribeGroup(List<Enemy> g) =>
 int XpThreshold(int level)
 {
     if (level <= 1) return 0;
-    int total = 0, gap = 30;
+    int total = 0, gap = 55;
     for (int i = 1; i < level; i++)
     {
         total += gap;
