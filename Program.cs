@@ -386,10 +386,10 @@ void AskName(Player p)
 
 string GameSaveDir()
 {
-    string desktop = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
-    if (string.IsNullOrEmpty(desktop) || !Directory.Exists(desktop))
-        desktop = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    string dir = Path.Combine(desktop, "OWSATH");
+    string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+    if (string.IsNullOrEmpty(docs) || !Directory.Exists(docs))
+        docs = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    string dir = Path.Combine(docs, "OWSATH");
     Directory.CreateDirectory(dir);
     return dir;
 }
