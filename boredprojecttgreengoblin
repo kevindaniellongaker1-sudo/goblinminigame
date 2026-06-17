@@ -76,9 +76,10 @@ List<Enemy> BuildGroup(int waveNum, Random r)
     }
     else
     {
-        // Wave 21+: 10 hobgoblins + growing number of orcs
-        int orcs = Math.Min(waveNum - 20, 10);
-        for (int i = 0; i < 10; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
+        // Wave 21+: orcs replace hobgoblins one-for-one each wave
+        int orcs = waveNum - 20;
+        int hobs = Math.Max(0, 10 - orcs);
+        for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
         for (int i = 0; i < orcs; i++) g.Add(new Orc(r, $"Orc {i + 1}"));
     }
     return g;
@@ -242,6 +243,8 @@ abstract class Enemy
     public int HpAtTurnStart = 0;
     public bool GrappleNextTurn = false;
     public int KOTurns = 0;
+    public int KOCount = 0;
+    public bool XpAwarded = false;
     public int BleedDmg = 0;
     public int DodgePenalty = 0;
     public int AttackPenalty = 0;
@@ -313,7 +316,7 @@ class Orc : Enemy
         MinGrapple = 3; MaxGrapple = 12;
         GrappleDmgMin = 2; GrappleDmgMax = 8;
         HasDoubleTap = true;
-        XPValue = 40;
+        XPValue = 30;
     }
 }
 
@@ -410,7 +413,7 @@ class CombatSession
                 {
                     e.HP -= e.BleedDmg;
                     Console.WriteLine($"  {e.Name} bleeds for {e.BleedDmg}. HP: {e.HP}/{e.MaxHP}");
-                    if (!e.Alive) { Console.WriteLine($"  {e.Name} bleeds out!"); GainXP(e.XPValue); }
+                    if (!e.Alive) { Console.WriteLine($"  {e.Name} bleeds out!"); if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); } }
                 }
             }
 
@@ -430,10 +433,25 @@ class CombatSession
             alive = Active.Where(e => e.Alive).ToList();
             if (!alive.Any() && !Pending.Any()) break;
 
+            // All alive enemies KO'd (and no reinforcements coming) → player wins
+            if (!Pending.Any() && alive.Any() && alive.All(e => e.KnockedOut))
+            {
+                Console.WriteLine("\nAll enemies are knocked out! You stand victorious.");
+                return true;
+            }
+
             EnemyTurn();
             P.ClearRoundEffects();
 
             foreach (var e in Active.Where(e => e.Alive)) e.EndOfRound();
+
+            // Check again after enemy turn (e.g. charmed enemies KO each other)
+            alive = Active.Where(e => e.Alive).ToList();
+            if (!Pending.Any() && alive.Any() && alive.All(e => e.KnockedOut))
+            {
+                Console.WriteLine("\nAll enemies are knocked out! You stand victorious.");
+                return true;
+            }
         }
         return P.HP > 0;
     }
@@ -748,11 +766,10 @@ class CombatSession
                     target.OffBalance = true; target.DodgePenalty += 2; target.AttackPenalty += 2;
                     Console.WriteLine($"  {target.Name} off-balance (-2 dodge/-2 atk)!"); break;
                 case 5:
-                    target.KnockedOut = true; target.KOTurns = Rng.Next(1, 7);
-                    Console.WriteLine($"  {target.Name} KNOCKED OUT for {target.KOTurns} turns!"); break;
+                    KnockOut(target); break;
                 case 6:
-                    target.KnockedOut = true; target.KOTurns = Rng.Next(1, 7); target.BleedDmg++;
-                    Console.WriteLine($"  {target.Name} KNOCKED OUT and BLEEDING!"); break;
+                    KnockOut(target); target.BleedDmg++;
+                    Console.WriteLine($"  {target.Name} is also BLEEDING!"); break;
             }
             if (!target.Alive) HandleKill(target);
             return;
@@ -811,10 +828,23 @@ class CombatSession
         if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") FreeAttack(target);
     }
 
+    void KnockOut(Enemy e)
+    {
+        e.KOCount++;
+        // 1st KO: 6-8t, 2nd: 8-12t, 3rd: 10-16t, Nth: (4+2N)-(4+4N)t
+        int minT = 4 + 2 * e.KOCount;
+        int maxT = 4 + 4 * e.KOCount;
+        e.KOTurns = Rng.Next(minT, maxT + 1);
+        e.KnockedOut = true;
+        if (e.HP <= 0) e.HP = 1; // non-lethal: stays at 1 HP
+        Console.WriteLine($"  {e.Name} KNOCKED OUT for {e.KOTurns} turns! (KO #{e.KOCount}: {minT}-{maxT}t range)");
+        if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); }
+    }
+
     void HandleKill(Enemy e)
     {
         Console.WriteLine($"  {e.Name} is defeated!");
-        GainXP(e.XPValue);
+        if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); }
         if (P.IsGrappled && P.GrappledBy == e) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You are no longer grappled."); }
         var others = Active.Where(x => x.Alive && x != e).ToList();
         if (P.HasFeat("Thin the Herd") && others.Any())
@@ -916,9 +946,8 @@ class CombatSession
                 Console.Write($"  Kehon Black Belt! Instant KO {target.Name}? (y/n): ");
                 if ((Console.ReadLine() ?? "").Trim().ToLower() == "y")
                 {
-                    target.KnockedOut = true; target.KOTurns = Rng.Next(3, 9);
+                    KnockOut(target);
                     target.Grappled = false;
-                    Console.WriteLine($"  {target.Name} knocked out for {target.KOTurns} turns!");
                 }
             }
         }
@@ -960,7 +989,7 @@ class CombatSession
                     int dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
                     victim.HP -= dmg;
                     Console.WriteLine($"  {e.Name} (charmed) attacks {victim.Name} for {dmg}! HP:{victim.HP}/{victim.MaxHP}");
-                    if (!victim.Alive) { Console.WriteLine($"  {victim.Name} falls to {e.Name}!"); GainXP(victim.XPValue); }
+                    if (!victim.Alive) { Console.WriteLine($"  {victim.Name} falls to {e.Name}!"); if (!victim.XpAwarded) { victim.XpAwarded = true; GainXP(victim.XPValue); } }
                 }
                 continue;
             }
