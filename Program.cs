@@ -166,6 +166,8 @@ List<Enemy> BuildGroup(int waveNum, Random r)
             }
         }
     }
+    g.Add(new SpellGoblin(r, "Spell Goblin A"));
+    g.Add(new SpellGoblin(r, "Spell Goblin B"));
     return g;
 }
 
@@ -611,6 +613,8 @@ class Player
     public Dictionary<string, int> FeatStacks = new();
     public Dictionary<string, int> GearCounts = new();
     public List<string> KnownSpells = new();
+    public int BurningDmg = 0, BurningTurns = 0;
+    public int FrostPenalty = 0, FrostTurns = 0;
 
     public Player(Random rng)
     {
@@ -655,6 +659,7 @@ abstract class Enemy
     public int KOTurns = 0;
     public int KOCount = 0;
     public bool XpAwarded = false;
+    public GridPos Position = new(-1, -1);
     public int BleedDmg = 0;
     public int BurningDmg = 0, BurningTurns = 0;
     public int FrostPenalty = 0, FrostTurns = 0;
@@ -720,6 +725,18 @@ class Goblin : Enemy
     }
 }
 
+class SpellGoblin : Goblin
+{
+    public string SpellName;
+    public SpellGoblin(Random rng, string name) : base(rng, name)
+    {
+        TypeName = "Spell Goblin";
+        string[] spells = { "Fire Blast", "Chain Lightning", "Frost Burst" };
+        SpellName = spells[rng.Next(3)];
+        XPValue = 15;
+    }
+}
+
 class Hobgoblin : Enemy
 {
     public Hobgoblin(Random rng, string name) : base(name, "Hobgoblin")
@@ -752,6 +769,9 @@ class Orc : Enemy
 
 class Troll : Enemy
 {
+    public int EquippedAxes = 2;
+    public int SpareAxes = 2;
+    public List<GridPos> ThrownAxePositions = new();
     public Troll(Random rng, string name) : base(name, "Troll")
     {
         MaxHP = 28; HP = MaxHP;
@@ -830,6 +850,26 @@ class FeatDef
     };
 }
 
+struct GridPos
+{
+    public int X, Y;
+    public GridPos(int x, int y) { X = x; Y = y; }
+    public static GridPos PlayerStart => new(25, 25);
+    public int ManhattanDist(GridPos o) => Math.Abs(X - o.X) + Math.Abs(Y - o.Y);
+    public bool IsCardinalAdjacent(GridPos o) =>
+        (Math.Abs(X - o.X) == 1 && Y == o.Y) || (X == o.X && Math.Abs(Y - o.Y) == 1);
+    public float Feet(GridPos o) => ManhattanDist(o) * 2.5f;
+    public bool SameAs(GridPos o) => X == o.X && Y == o.Y;
+    public string CompassFrom(GridPos origin)
+    {
+        int dx = X - origin.X, dy = Y - origin.Y;
+        string d = "";
+        if (dy < 0) d += "N"; else if (dy > 0) d += "S";
+        if (dx > 0) d += "E"; else if (dx < 0) d += "W";
+        return string.IsNullOrEmpty(d) ? "here" : d;
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // COMBAT SESSION
 // ═══════════════════════════════════════════════════════════════════════════
@@ -843,10 +883,12 @@ class CombatSession
     List<Enemy> Active;
     List<(List<Enemy> batch, int turns)> Pending = new();
     public bool PlayerFled = false;
+    GridPos PlayerPos = GridPos.PlayerStart;
 
     public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp)
     {
         P = p; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
+        PlaceEnemies(enemies, nearEdge: false);
     }
 
     public bool Run()
@@ -860,6 +902,21 @@ class CombatSession
             turnNum++;
             Console.WriteLine($"\n━━━━ Turn {turnNum} ━━━━");
 
+            // Player burning
+            if (P.BurningDmg > 0)
+            {
+                P.HP -= P.BurningDmg;
+                Console.WriteLine($"  You are BURNING! {P.BurningDmg} damage. HP:{P.HP}/{P.MaxHP}");
+                P.BurningTurns--;
+                if (P.BurningTurns <= 0) { P.BurningDmg = 0; Console.WriteLine("  Your flames die out."); }
+            }
+            // Player frost countdown
+            if (P.FrostTurns > 0)
+            {
+                P.FrostTurns--;
+                if (P.FrostTurns <= 0) { P.FrostPenalty = 0; Console.WriteLine("  The frost clears from your limbs."); }
+            }
+
             // Arrive reinforcements
             var newPending = new List<(List<Enemy> batch, int turns)>();
             foreach (var (batch, turns) in Pending)
@@ -867,6 +924,7 @@ class CombatSession
                 if (turns <= 0)
                 {
                     Console.WriteLine("\n! REINFORCEMENTS ARRIVE !");
+                    PlaceEnemies(batch, nearEdge: true);
                     foreach (var e in batch) { e.Alive = true; e.HP = e.MaxHP; Active.Add(e); Console.WriteLine($"  {e.Name} charges in! (HP:{e.HP})"); }
                 }
                 else newPending.Add((batch, turns - 1));
@@ -912,7 +970,15 @@ class CombatSession
             if (!alive.Any() && !Pending.Any()) break;
 
             Console.WriteLine($"\nHP: {P.HP}/{P.MaxHP}  XP: {P.XP}  Level: {P.Level}");
-            for (int i = 0; i < alive.Count; i++) Console.WriteLine($"  [{i + 1}] {alive[i].DisplayStatus()}");
+            if (P.BurningDmg > 0) Console.WriteLine($"  [BURNING {P.BurningDmg}/turn × {P.BurningTurns}t]");
+            if (P.FrostPenalty > 0) Console.WriteLine($"  [FROZEN -{P.FrostPenalty} dodge × {P.FrostTurns}t]");
+            ShowMap(alive);
+            for (int i = 0; i < alive.Count; i++)
+            {
+                float ft = alive[i].Position.Feet(PlayerPos);
+                string compass = alive[i].Position.CompassFrom(PlayerPos);
+                Console.WriteLine($"  [{i + 1}] {alive[i].DisplayStatus()}  ({ft:F0}ft {compass})");
+            }
 
             // Snapshot HP so consecutive-damage tracking works after player acts
             foreach (var e in Active.Where(x => x.Alive)) e.HpAtTurnStart = e.HP;
@@ -1559,9 +1625,18 @@ class CombatSession
         {
             case "Fire Blast":
             {
-                int numTargets = Rng.Next(2, 5);
-                Console.WriteLine($"  FIRE BLAST! Engulfs {numTargets} enemies in flames.");
-                var targets = alive.OrderBy(_ => Rng.Next()).Take(numTargets).ToList();
+                // 5×5 foot area (2×2 squares): hits all enemies within Manhattan dist ≤ 1 of chosen target
+                var primary = PickTarget(alive);
+                if (primary == null) break;
+                var targets = alive.Where(e => e.Position.ManhattanDist(primary.Position) <= 1).ToList();
+                Console.WriteLine($"  FIRE BLAST! 5×5 area centered on {primary.Name}. {targets.Count} enemy(ies) hit.");
+                // Friendly fire: player in blast area?
+                if (PlayerPos.ManhattanDist(primary.Position) <= 1)
+                {
+                    int selfFire = Rng.Next(4, 13);
+                    Console.WriteLine($"  [!] You're in the blast area! {selfFire} fire damage. HP:{P.HP - selfFire}/{P.MaxHP}");
+                    P.HP -= selfFire;
+                }
                 int burnDmg = Rng.Next(1, 5);
                 int burnTurns = Rng.Next(4, 9);
                 foreach (var e in targets)
@@ -1581,18 +1656,36 @@ class CombatSession
             }
             case "Chain Lightning":
             {
-                int numTargets = Math.Min(Rng.Next(5, 12), alive.Count);
-                Console.WriteLine($"  CHAIN LIGHTNING! Arcs through {numTargets} enemies.");
-                var targets = alive.OrderBy(_ => Rng.Next()).Take(numTargets).ToList();
-                foreach (var e in targets)
+                // Starts at chosen target, jumps to next enemy within 5 feet (2 squares), continues
+                var firstTarget = PickTarget(alive);
+                if (firstTarget == null) break;
+                Console.WriteLine($"  CHAIN LIGHTNING! Starting at {firstTarget.Name}.");
+                var hit = new HashSet<Enemy>();
+                var cur = firstTarget;
+                int jumpCount = 0;
+                while (cur != null && jumpCount < 20)
                 {
                     int dmg = Rng.Next(3, 7);
-                    if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
-                    else if (e.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
-                    e.HP -= dmg; e.HitBySpell = true;
-                    Console.WriteLine($"    {e.Name} struck for {dmg} lightning! HP:{e.HP}/{e.MaxHP}");
-                    if (!e.Alive) HandleKill(e);
+                    if (cur.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
+                    else if (cur.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
+                    cur.HP -= dmg; cur.HitBySpell = true; hit.Add(cur);
+                    Console.WriteLine($"    {cur.Name} struck for {dmg} lightning! HP:{cur.HP}/{cur.MaxHP}");
+                    if (!cur.Alive) HandleKill(cur);
+                    // Also check if player is within 2 squares and not yet hit this chain
+                    if (!hit.Contains(null!) && PlayerPos.ManhattanDist(cur.Position) <= 2 && jumpCount > 0)
+                    {
+                        int selfDmg = Rng.Next(2, 7);
+                        Console.WriteLine($"    Lightning arcs to you! {selfDmg} damage. HP:{P.HP - selfDmg}/{P.MaxHP}");
+                        P.HP -= selfDmg;
+                        hit.Add(null!); // mark player hit to prevent re-hitting
+                    }
+                    // Find next unhit enemy within 2 squares
+                    cur = alive.Where(e => !hit.Contains(e) && e.Alive && e.Position.ManhattanDist(cur.Position) <= 2)
+                               .OrderBy(e => e.Position.ManhattanDist(cur.Position))
+                               .FirstOrDefault();
+                    jumpCount++;
                 }
+                Console.WriteLine($"  Chain Lightning hit {hit.Count(e => e != null)} enemies.");
                 P.ChainLightningUses++;
                 if (P.ChainLightningUses > 3)
                 {
@@ -1604,9 +1697,30 @@ class CombatSession
             }
             case "Frost Burst":
             {
-                int numTargets = Math.Min(Rng.Next(2, 9), alive.Count);
-                Console.WriteLine($"  FROST BURST! Freezes {numTargets} enemies.");
-                var targets = alive.OrderBy(_ => Rng.Next()).Take(numTargets).ToList();
+                // 7.5×7.5 area (3×3 squares): cone or square around caster
+                Console.Write("  FROST BURST! [S]quare (3×3 around you) or cone [N/S/E/W]: ");
+                string fb = (Console.ReadLine() ?? "s").Trim().ToLower();
+                List<Enemy> targets;
+                if (fb.StartsWith("n") || fb.StartsWith("s") || fb.StartsWith("e") || fb.StartsWith("w"))
+                {
+                    // Cone: 3×3 block in chosen direction from player
+                    int cx = PlayerPos.X + (fb.StartsWith("e") ? 1 : fb.StartsWith("w") ? -1 : 0);
+                    int cy = PlayerPos.Y + (fb.StartsWith("s") ? 1 : fb.StartsWith("n") ? -1 : 0);
+                    targets = alive.Where(e =>
+                        Math.Abs(e.Position.X - cx) <= 1 && Math.Abs(e.Position.Y - cy) <= 1).ToList();
+                    Console.WriteLine($"  Cone {fb.ToUpper()}: {targets.Count} enemies caught!");
+                }
+                else
+                {
+                    // Square: Chebyshev distance ≤ 1 from player (3×3)
+                    targets = alive.Where(e =>
+                        Math.Abs(e.Position.X - PlayerPos.X) <= 1 && Math.Abs(e.Position.Y - PlayerPos.Y) <= 1).ToList();
+                    // Friendly fire: player is in own Frost Burst square
+                    Console.WriteLine($"  Frost Burst square: {targets.Count} enemies caught!");
+                    int selfFrost = Rng.Next(2, 9);
+                    Console.WriteLine($"  [!] The frost engulfs you too! {selfFrost} cold damage. HP:{P.HP - selfFrost}/{P.MaxHP}");
+                    P.HP -= selfFrost;
+                }
                 int frostPen = Rng.Next(2, 9);
                 int frostTurns = Rng.Next(2, 7);
                 foreach (var e in targets)
@@ -1752,7 +1866,8 @@ class CombatSession
                     actions--;
                 }
 
-                // HP > 6: attack; HP <= 6 but > 5: still attack (not fleeing territory)
+                // HP > 6: move if needed then attack
+                MoveTowardPlayer(e, ref actions);
                 for (int i = 0; i < actions && P.HP > 0; i++)
                     EnemyAttack(e);
 
@@ -1813,7 +1928,8 @@ class CombatSession
                     actions--;
                 }
 
-                // HP >= 6: attack with remaining actions (maintain grapple if holding player)
+                // HP >= 6: move if needed, then attack/maintain grapple
+                MoveTowardPlayer(e, ref actions);
                 for (int i = 0; i < actions && P.HP > 0; i++)
                 {
                     if (P.IsGrappled && P.GrappledBy == e)
@@ -1888,7 +2004,7 @@ class CombatSession
                     continue;
                 }
 
-                // HP >= 5: grapple if triggered, then attack
+                // HP >= 5: grapple if triggered, then attack/throw/move
                 if (e.GrappleNextTurn && actions > 0)
                 {
                     e.GrappleNextTurn = false;
@@ -1896,14 +2012,23 @@ class CombatSession
                     actions--;
                 }
 
+                var tr = (Troll)e;
                 for (int i = 0; i < actions && P.HP > 0; i++)
                 {
                     if (P.IsGrappled && P.GrappledBy == e)
                         OrcMaintainGrapple(e);
-                    else
+                    else if (e.Position.IsCardinalAdjacent(PlayerPos))
                     {
                         EnemyAttack(e);
                         if (e.Alive && P.HP > 0) EnemyKick(e);
+                    }
+                    else
+                    {
+                        float trollFeet = e.Position.Feet(PlayerPos);
+                        if (trollFeet <= 15f && tr.EquippedAxes > 0)
+                            DoTrollAxeThrow(tr, trollFeet);
+                        else
+                            MoveTowardPlayer(e, ref actions, suppressCost: true);
                     }
                 }
 
@@ -1975,6 +2100,7 @@ class CombatSession
                 if (ogrePct <= 24)
                 {
                     e.PowerAttackMode = true;
+                    MoveTowardPlayer(e, ref actions);
                     if (actions > 0 && P.HP > 0)
                     {
                         Console.WriteLine($"  {e.Name} winds up for a massive power attack!");
@@ -1999,6 +2125,7 @@ class CombatSession
                         OgreGrappleAction(e, bothHands: false);
                         actions--;
                     }
+                    MoveTowardPlayer(e, ref actions);
                     for (int i = 0; i < actions && P.HP > 0; i++)
                     {
                         if (P.IsGrappled && P.GrappledBy == e)
@@ -2017,6 +2144,7 @@ class CombatSession
                     OgreGrappleAction(e, bothHands: false);
                     actions--;
                 }
+                MoveTowardPlayer(e, ref actions);
                 for (int i = 0; i < actions && P.HP > 0; i++)
                 {
                     if (P.IsGrappled && P.GrappledBy == e)
@@ -2027,7 +2155,24 @@ class CombatSession
                 continue;
             }
 
-            // Normal goblin: attack with all remaining actions
+            // ── SpellGoblin AI ─────────────────────────────────────────────
+            if (e is SpellGoblin sg)
+            {
+                float sgFeet = e.Position.Feet(PlayerPos);
+                if (sgFeet > 25f)
+                {
+                    MoveTowardPlayer(e, ref actions);
+                }
+                else
+                {
+                    for (int i = 0; i < actions && P.HP > 0; i++)
+                        DoEnemySpell(sg);
+                }
+                continue;
+            }
+
+            // Normal goblin: move if needed, then attack
+            MoveTowardPlayer(e, ref actions);
             for (int i = 0; i < actions && P.HP > 0; i++)
                 EnemyAttack(e);
         }
@@ -2185,9 +2330,10 @@ class CombatSession
     void EnemyAttack(Enemy e)
     {
         if (!e.Alive || e.KnockedOut) return;
+        if (!e.Position.IsCardinalAdjacent(PlayerPos)) return; // out of melee range
         int eAtk = Rng.Next(e.MinAttack, e.MaxAttack + 1) - e.AttackPenalty - e.FrostPenalty;
         if (e.PowerAttackMode) eAtk = Math.Max(1, eAtk - 2); // power attack penalty
-        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1) - P.FrostPenalty;
         Console.WriteLine($"  {e.Name} attacks{(e.PowerAttackMode ? " (POWER)" : "")}! Roll {eAtk} vs your dodge {pDdg}.");
         if (eAtk >= pDdg)
         {
@@ -2225,6 +2371,225 @@ class CombatSession
                 Console.Write($"  Kehon! Instant grapple on {e.Name}? (y/n): ");
                 if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") DoGrapple(e);
             }
+        }
+    }
+
+    // ── GRID HELPERS ─────────────────────────────────────────────────────
+
+    void PlaceEnemies(List<Enemy> enemies, bool nearEdge)
+    {
+        var occupied = new HashSet<(int, int)>(Active.Where(e => e.Alive).Select(e => (e.Position.X, e.Position.Y)));
+        occupied.Add((PlayerPos.X, PlayerPos.Y));
+        foreach (var e in enemies)
+        {
+            GridPos pos;
+            int attempts = 0;
+            do
+            {
+                int dist = Rng.Next(nearEdge ? 14 : 4, nearEdge ? 28 : 12);
+                double angle = Rng.NextDouble() * 2 * Math.PI;
+                int x = Math.Clamp((int)(PlayerPos.X + dist * Math.Cos(angle)), 1, 48);
+                int y = Math.Clamp((int)(PlayerPos.Y + dist * Math.Sin(angle)), 1, 48);
+                pos = new GridPos(x, y);
+                attempts++;
+            } while (occupied.Contains((pos.X, pos.Y)) && attempts < 100);
+            occupied.Add((pos.X, pos.Y));
+            e.Position = pos;
+        }
+    }
+
+    GridPos StepToward(GridPos from, GridPos target)
+    {
+        int dx = Math.Sign(target.X - from.X);
+        int dy = Math.Sign(target.Y - from.Y);
+        int adx = Math.Abs(target.X - from.X);
+        int ady = Math.Abs(target.Y - from.Y);
+        if (adx == 0) return new GridPos(from.X, Math.Clamp(from.Y + dy, 0, 49));
+        if (ady == 0) return new GridPos(Math.Clamp(from.X + dx, 0, 49), from.Y);
+        return adx >= ady
+            ? new GridPos(Math.Clamp(from.X + dx, 0, 49), from.Y)
+            : new GridPos(from.X, Math.Clamp(from.Y + dy, 0, 49));
+    }
+
+    void MoveTowardPlayer(Enemy e, ref int actions, bool suppressCost = false)
+    {
+        if (e.Position.IsCardinalAdjacent(PlayerPos)) return;
+        var occupied = new HashSet<(int, int)>(Active.Where(en => en.Alive && en != e).Select(en => (en.Position.X, en.Position.Y)));
+        occupied.Add((PlayerPos.X, PlayerPos.Y));
+        var newPos = StepToward(e.Position, PlayerPos);
+        if (!occupied.Contains((newPos.X, newPos.Y)))
+            e.Position = newPos;
+        if (!suppressCost) actions--;
+        if (e.Position.IsCardinalAdjacent(PlayerPos))
+            Console.WriteLine($"  {e.Name} closes to melee range!");
+    }
+
+    void ShowMap(List<Enemy> alive)
+    {
+        int hw = 10, hh = 5;
+        Console.WriteLine("  Map (@ you  g goblin  s spell-goblin  h hob  o orc  t troll  O ogre  x axe):");
+        for (int y = PlayerPos.Y - hh; y <= PlayerPos.Y + hh; y++)
+        {
+            Console.Write("  ");
+            for (int x = PlayerPos.X - hw; x <= PlayerPos.X + hw; x++)
+            {
+                if (x < 0 || x > 49 || y < 0 || y > 49) { Console.Write('#'); continue; }
+                var pos = new GridPos(x, y);
+                if (pos.SameAs(PlayerPos)) { Console.Write('@'); continue; }
+                bool isAxe = Active.OfType<Troll>().Any(tr => tr.ThrownAxePositions.Any(ap => ap.SameAs(pos)));
+                if (isAxe) { Console.Write('x'); continue; }
+                var en = alive.FirstOrDefault(a => a.Position.SameAs(pos));
+                Console.Write(en != null ? EnemyChar(en) : '.');
+            }
+            Console.WriteLine();
+        }
+    }
+
+    char EnemyChar(Enemy e) => e switch
+    {
+        SpellGoblin => 's',
+        Goblin => 'g',
+        Hobgoblin => 'h',
+        Orc => 'o',
+        Troll => 't',
+        Ogre => 'O',
+        _ => '?'
+    };
+
+    // ── SPELL GOBLIN ENEMY SPELL ──────────────────────────────────────────
+
+    void DoEnemySpell(SpellGoblin sg)
+    {
+        Console.WriteLine($"  {sg.Name} casts {sg.SpellName}!");
+        int burnDmg, burnTurns, frostPen, frostTurns;
+        switch (sg.SpellName)
+        {
+            case "Fire Blast":
+            {
+                // 5×5 area centered on player: hits player + any enemies in Manhattan dist ≤ 1
+                int dmg = Rng.Next(4, 13);
+                burnDmg = Rng.Next(1, 5); burnTurns = Rng.Next(4, 9);
+                Console.WriteLine($"    Fire erupts around you! {dmg} fire damage. HP:{P.HP - dmg}/{P.MaxHP}");
+                P.HP -= dmg;
+                P.BurningDmg = Math.Max(P.BurningDmg, burnDmg);
+                P.BurningTurns = Math.Max(P.BurningTurns, burnTurns);
+                Console.WriteLine($"    You are BURNING! ({burnDmg}/turn × {burnTurns} turns)");
+                // Friendly fire: nearby enemies also hit
+                foreach (var e in Active.Where(e => e.Alive && e != sg && e.Position.ManhattanDist(PlayerPos) <= 1).ToList())
+                {
+                    int eDmg = Rng.Next(4, 13);
+                    if (e.MagicResistant) eDmg = Math.Max(1, eDmg / 2);
+                    else if (e.MagicVulnerable) eDmg = (int)(eDmg * 1.5);
+                    e.HP -= eDmg; e.HitBySpell = true;
+                    Console.WriteLine($"    {e.Name} caught in friendly fire! {eDmg} dmg. HP:{e.HP}/{e.MaxHP}");
+                    if (!e.Alive) { Console.WriteLine($"    {e.Name} burns out!"); if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); } }
+                }
+                break;
+            }
+            case "Chain Lightning":
+            {
+                // Hits player first, then jumps to enemies within 2 squares
+                int dmg = Rng.Next(3, 7);
+                Console.WriteLine($"    Lightning strikes you for {dmg}! HP:{P.HP - dmg}/{P.MaxHP}");
+                P.HP -= dmg;
+                var lastPos = PlayerPos;
+                var hitSet = new HashSet<Enemy>();
+                int jumps = 0;
+                Enemy? next = Active.Where(e => e.Alive && e != sg && !hitSet.Contains(e) && e.Position.ManhattanDist(lastPos) <= 2)
+                                    .OrderBy(e => e.Position.ManhattanDist(lastPos)).FirstOrDefault();
+                while (next != null && jumps < 15)
+                {
+                    int jDmg = Rng.Next(3, 7);
+                    if (next.MagicResistant) jDmg = Math.Max(1, jDmg / 2);
+                    else if (next.MagicVulnerable) jDmg = (int)(jDmg * 1.5);
+                    next.HP -= jDmg; next.HitBySpell = true; hitSet.Add(next);
+                    Console.WriteLine($"    Lightning jumps to {next.Name} for {jDmg}! HP:{next.HP}/{next.MaxHP}");
+                    if (!next.Alive) { Console.WriteLine($"    {next.Name} is destroyed!"); if (!next.XpAwarded) { next.XpAwarded = true; GainXP(next.XPValue); } }
+                    lastPos = next.Position;
+                    next = Active.Where(e => e.Alive && e != sg && !hitSet.Contains(e) && e.Position.ManhattanDist(lastPos) <= 2)
+                                 .OrderBy(e => e.Position.ManhattanDist(lastPos)).FirstOrDefault();
+                    jumps++;
+                }
+                break;
+            }
+            case "Frost Burst":
+            {
+                // 7.5×7.5 cone aimed at player: all in 3×3 around player hit
+                int dmg = Rng.Next(2, 9);
+                frostPen = Rng.Next(2, 9); frostTurns = Rng.Next(2, 7);
+                Console.WriteLine($"    Frost cone! {dmg} cold damage. HP:{P.HP - dmg}/{P.MaxHP}");
+                P.HP -= dmg;
+                P.FrostPenalty = Math.Max(P.FrostPenalty, frostPen);
+                P.FrostTurns = Math.Max(P.FrostTurns, frostTurns);
+                Console.WriteLine($"    You are FROZEN! (-{frostPen} dodge for {frostTurns} turns)");
+                foreach (var e in Active.Where(e => e.Alive && e != sg &&
+                    Math.Abs(e.Position.X - PlayerPos.X) <= 1 && Math.Abs(e.Position.Y - PlayerPos.Y) <= 1).ToList())
+                {
+                    int eDmg = Rng.Next(2, 9);
+                    if (e.MagicResistant) eDmg = Math.Max(1, eDmg / 2);
+                    else if (e.MagicVulnerable) eDmg = (int)(eDmg * 1.5);
+                    e.HP -= eDmg; e.HitBySpell = true;
+                    Console.WriteLine($"    {e.Name} caught in frost! {eDmg} dmg. HP:{e.HP}/{e.MaxHP}");
+                    if (!e.Alive) { Console.WriteLine($"    {e.Name} freezes solid!"); if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); } }
+                }
+                break;
+            }
+        }
+    }
+
+    // ── TROLL AXE THROW ───────────────────────────────────────────────────
+
+    void DoTrollAxeThrow(Troll tr, float feet)
+    {
+        int atkRoll = Rng.Next(tr.MinAttack, tr.MaxAttack + 1) - tr.AttackPenalty;
+        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1) - P.FrostPenalty;
+        int dmgMin, dmgMax;
+        if (feet <= 7.5f) { dmgMin = 2; dmgMax = 6; }
+        else if (feet <= 10f) { dmgMin = 1; dmgMax = 6; }
+        else { dmgMin = 1; dmgMax = 2; }
+        Console.WriteLine($"  {tr.Name} hurls an axe! ({feet:F0}ft, dmg {dmgMin}-{dmgMax}) Roll {atkRoll} vs your dodge {pDdg}.");
+        tr.EquippedAxes--;
+        if (atkRoll >= pDdg)
+        {
+            int dmg = Rng.Next(dmgMin, dmgMax + 1);
+            if (P.Defending) dmg = Math.Max(1, dmg / 2);
+            if (P.ArmorDamageReduction > 0) dmg = Math.Max(1, dmg - P.ArmorDamageReduction);
+            Console.WriteLine($"  Axe HIT! {dmg} damage. HP:{P.HP - dmg}/{P.MaxHP}");
+            P.HP -= dmg;
+            tr.ThrownAxePositions.Add(PlayerPos); // axe near player
+        }
+        else
+        {
+            Console.WriteLine("  Axe MISS! Clatters nearby.");
+            // Axe lands in a random adjacent square to player
+            int[] offX = { 0, 1, 0, -1 };
+            int[] offY = { -1, 0, 1, 0 };
+            int dir = Rng.Next(4);
+            tr.ThrownAxePositions.Add(new GridPos(
+                Math.Clamp(PlayerPos.X + offX[dir], 0, 49),
+                Math.Clamp(PlayerPos.Y + offY[dir], 0, 49)));
+        }
+        // Troll picks up axe if adjacent to it (any remaining action will handle it)
+        TrollTryPickupAxe(tr);
+        // Equip spare if available and equipped < 2
+        if (tr.EquippedAxes < 2 && tr.SpareAxes > 0)
+        {
+            tr.SpareAxes--; tr.EquippedAxes++;
+            Console.WriteLine($"  {tr.Name} equips a spare axe. ({tr.EquippedAxes} equipped, {tr.SpareAxes} spare)");
+        }
+        if (tr.EquippedAxes == 0)
+            Console.WriteLine($"  {tr.Name} has no more axes! Unarmed (1-6 dmg).");
+    }
+
+    void TrollTryPickupAxe(Troll tr)
+    {
+        var toPickup = tr.ThrownAxePositions.Where(ap => ap.IsCardinalAdjacent(tr.Position) || ap.SameAs(tr.Position)).ToList();
+        foreach (var ap in toPickup)
+        {
+            tr.ThrownAxePositions.Remove(ap);
+            if (tr.SpareAxes < 2) tr.SpareAxes++;
+            Console.WriteLine($"  {tr.Name} retrieves an axe. ({tr.SpareAxes} spare)");
+            break; // 1 per action
         }
     }
 }
