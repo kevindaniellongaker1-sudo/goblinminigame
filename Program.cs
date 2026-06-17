@@ -70,7 +70,8 @@ while (true)
     Console.WriteLine($" GROUP {waveNum}: {DescribeGroup(group)}");
     Console.WriteLine($"──────────────────────────────────");
 
-    var session = new CombatSession(player, group, rng, XpThreshold, GainXP);
+    var session = new CombatSession(player, group, rng, XpThreshold, GainXP,
+        groupsDefeated == 0 ? new GridPos(1, 48) : new GridPos(1, 25));
     bool survived = session.Run();
 
     if (!survived)
@@ -883,11 +884,12 @@ class CombatSession
     List<Enemy> Active;
     List<(List<Enemy> batch, int turns)> Pending = new();
     public bool PlayerFled = false;
-    GridPos PlayerPos = GridPos.PlayerStart;
+    GridPos PlayerPos;
 
-    public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp)
+    public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart)
     {
         P = p; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
+        PlayerPos = playerStart;
         PlaceEnemies(enemies, nearEdge: false);
     }
 
@@ -1086,6 +1088,23 @@ class CombatSession
                     justBlocked = false;
                     break;
 
+                case "move":
+                {
+                    if (P.IsGrappled) { Console.WriteLine("  You can't move while grappled!"); continue; }
+                    int moveRoll = Rng.Next(1, 7);
+                    Console.Write($"  Move roll: {moveRoll} squares. Direction [N/S/E/W]: ");
+                    string dir = (Console.ReadLine() ?? "").Trim().ToLower();
+                    int mdx = dir.StartsWith("e") ? 1 : dir.StartsWith("w") ? -1 : 0;
+                    int mdy = dir.StartsWith("s") ? 1 : dir.StartsWith("n") ? -1 : 0;
+                    if (mdx == 0 && mdy == 0) { Console.WriteLine("  Invalid direction (N/S/E/W)."); continue; }
+                    PlayerPos = new GridPos(
+                        Math.Clamp(PlayerPos.X + mdx * moveRoll, 0, 49),
+                        Math.Clamp(PlayerPos.Y + mdy * moveRoll, 0, 49));
+                    Console.WriteLine($"  You move {moveRoll} sq {dir.ToUpper()}. Now at ({PlayerPos.X},{PlayerPos.Y}).");
+                    justBlocked = false;
+                    break;
+                }
+
                 case "run":
                 {
                     if (P.IsGrappled) { Console.WriteLine("  You can't run while grappled!"); continue; }
@@ -1220,7 +1239,7 @@ class CombatSession
 
     List<string> BuildOpts(bool justBlocked, List<Enemy> alive, Enemy? blockTarget = null)
     {
-        var o = new List<string> { "attack", "grapple", "defend", "healing potion", "run" };
+        var o = new List<string> { "attack", "grapple", "move", "defend", "healing potion", "run" };
         if (P.HasFeat("Block")) o.Add("block");
         if (P.HasFeat("Parry") && justBlocked && !(blockTarget is Ogre)) o.Add("parry");
         if (P.HasFeat("Bard Song")) o.Add("bard song");
@@ -1671,21 +1690,13 @@ class CombatSession
                     cur.HP -= dmg; cur.HitBySpell = true; hit.Add(cur);
                     Console.WriteLine($"    {cur.Name} struck for {dmg} lightning! HP:{cur.HP}/{cur.MaxHP}");
                     if (!cur.Alive) HandleKill(cur);
-                    // Also check if player is within 2 squares and not yet hit this chain
-                    if (!hit.Contains(null!) && PlayerPos.ManhattanDist(cur.Position) <= 2 && jumpCount > 0)
-                    {
-                        int selfDmg = Rng.Next(2, 7);
-                        Console.WriteLine($"    Lightning arcs to you! {selfDmg} damage. HP:{P.HP - selfDmg}/{P.MaxHP}");
-                        P.HP -= selfDmg;
-                        hit.Add(null!); // mark player hit to prevent re-hitting
-                    }
-                    // Find next unhit enemy within 2 squares
+                    // Find next unhit enemy within 2 squares (never arcs back to player)
                     cur = alive.Where(e => !hit.Contains(e) && e.Alive && e.Position.ManhattanDist(cur.Position) <= 2)
                                .OrderBy(e => e.Position.ManhattanDist(cur.Position))
                                .FirstOrDefault();
                     jumpCount++;
                 }
-                Console.WriteLine($"  Chain Lightning hit {hit.Count(e => e != null)} enemies.");
+                Console.WriteLine($"  Chain Lightning hit {hit.Count} enemies.");
                 P.ChainLightningUses++;
                 if (P.ChainLightningUses > 3)
                 {
@@ -2398,10 +2409,9 @@ class CombatSession
             int attempts = 0;
             do
             {
-                int dist = Rng.Next(nearEdge ? 14 : 4, nearEdge ? 28 : 12);
-                double angle = Rng.NextDouble() * 2 * Math.PI;
-                int x = Math.Clamp((int)(PlayerPos.X + dist * Math.Cos(angle)), 1, 48);
-                int y = Math.Clamp((int)(PlayerPos.Y + dist * Math.Sin(angle)), 1, 48);
+                // Enemies always come from the right side
+                int x = Rng.Next(nearEdge ? 44 : 30, 50);
+                int y = Rng.Next(1, 49);
                 pos = new GridPos(x, y);
                 attempts++;
             } while (occupied.Contains((pos.X, pos.Y)) && attempts < 100);
