@@ -252,6 +252,8 @@ abstract class Enemy
     public int MinGrapple = 1, MaxGrapple = 6;
     public int GrappleDmgMin = 1, GrappleDmgMax = 6;
     public bool HasDoubleTap = false;
+    public bool HasBlock = false;
+    public int BlockMin = 1, BlockMax = 6;
 
     public Enemy(string name, string typeName) { Name = name; TypeName = typeName; }
 
@@ -316,6 +318,7 @@ class Orc : Enemy
         MinGrapple = 3; MaxGrapple = 12;
         GrappleDmgMin = 2; GrappleDmgMax = 8;
         HasDoubleTap = true;
+        HasBlock = true; BlockMin = 2; BlockMax = 10;
         XPValue = 30;
     }
 }
@@ -698,14 +701,14 @@ class CombatSession
             int ofAtk = Rng.Next(1, 7);
             int ofDdg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
             Console.WriteLine($"  Off-hand: roll {ofAtk} vs dodge {ofDdg}.");
-            if (ofAtk >= ofDdg)
+            if (ofAtk >= ofDdg && !EnemyBlocks(target, ofAtk))
             {
                 int ofDmg = Rng.Next(1, P.OffhandMaxDamage + 1);
                 Console.WriteLine($"  Off-hand HIT! {ofDmg} dmg → {target.Name} HP:{target.HP - ofDmg}/{target.MaxHP}");
                 target.HP -= ofDmg;
                 if (!target.Alive) HandleKill(target);
             }
-            else Console.WriteLine("  Off-hand MISS!");
+            else if (ofAtk < ofDdg) Console.WriteLine("  Off-hand MISS!");
         }
 
         // Kick (Basic Combo)
@@ -719,8 +722,8 @@ class CombatSession
             {
                 int hbA = Rng.Next(1, 7), hbD = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
                 Console.WriteLine($"  Headbutt: {hbA} vs {hbD}.");
-                if (hbA >= hbD) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Headbutt HIT! {d} dmg."); if (!target.Alive) HandleKill(target); }
-                else Console.WriteLine("  Headbutt MISS!");
+                if (hbA >= hbD && !EnemyBlocks(target, hbA)) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Headbutt HIT! {d} dmg."); if (!target.Alive) HandleKill(target); }
+                else if (hbA < hbD) Console.WriteLine("  Headbutt MISS!");
             }
         }
 
@@ -744,6 +747,8 @@ class CombatSession
             if (P.HasFeat("Judo")) JudoPrompt(target);
             return;
         }
+
+        if (EnemyBlocks(target, atkRoll)) return;
 
         if (disarm)
         {
@@ -801,8 +806,8 @@ class CombatSession
     {
         int kA = Rng.Next(1, 5), kD = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
         Console.WriteLine($"  Kick: {kA} vs {kD}.");
-        if (kA >= kD) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Kick HIT! {d} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}"); if (!target.Alive) HandleKill(target); }
-        else Console.WriteLine("  Kick MISS!");
+        if (kA >= kD && !EnemyBlocks(target, kA)) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Kick HIT! {d} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}"); if (!target.Alive) HandleKill(target); }
+        else if (kA < kD) Console.WriteLine("  Kick MISS!");
     }
 
     void FreeAttack(Enemy target)
@@ -811,14 +816,14 @@ class CombatSession
         int a = Rng.Next(P.MinAttack, P.MaxAttack + 1);
         int d = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
         Console.WriteLine($"  [Free attack] {a} vs {d}.");
-        if (a >= d)
+        if (a >= d && !EnemyBlocks(target, a))
         {
             int dmg = Rng.Next(P.MinDamage, P.MaxDamage + 1) + (P.HasFeat("Built") ? P.GetFeatStacks("Built") : 0);
             target.HP -= dmg;
             Console.WriteLine($"  HIT! {dmg} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}");
             if (!target.Alive) HandleKill(target);
         }
-        else Console.WriteLine("  Miss!");
+        else if (a < d) Console.WriteLine("  Miss!");
     }
 
     void FreeAttackPrompt(string feat, Enemy target)
@@ -826,6 +831,18 @@ class CombatSession
         if (!P.HasFeat(feat) || !target.Alive) return;
         Console.Write($"  {feat}! Free attack on {target.Name}? (y/n): ");
         if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") FreeAttack(target);
+    }
+
+    // Returns true if the enemy successfully blocks the incoming attack.
+    // Not available when knocked down, KO'd, or off-balance.
+    bool EnemyBlocks(Enemy target, int atkRoll)
+    {
+        if (!target.HasBlock || target.KnockedDown || target.KnockedOut || target.OffBalance) return false;
+        int bRoll = Rng.Next(target.BlockMin, target.BlockMax + 1);
+        Console.WriteLine($"  {target.Name} blocks! Roll {bRoll} vs your attack {atkRoll}.");
+        if (bRoll >= atkRoll) { Console.WriteLine($"  BLOCKED!"); return true; }
+        Console.WriteLine($"  Block failed! ({bRoll} < {atkRoll})");
+        return false;
     }
 
     void KnockOut(Enemy e)
@@ -877,14 +894,14 @@ class CombatSession
             int a = Rng.Next(P.MinAttack, P.MaxAttack + 1) + pen;
             int d = Rng.Next(t.MinDodge, t.MaxDodge + 1) - 4 - t.DodgePenalty;
             Console.WriteLine($"  Opportunist: {a} vs {t.Name}'s dodge {d}.");
-            if (a >= d)
+            if (a >= d && !EnemyBlocks(t, a))
             {
                 int dmg = Rng.Next(P.MinDamage, P.MaxDamage + 1) + (d <= 0 ? 1 : 0);
                 t.HP -= dmg;
                 Console.WriteLine($"  HIT! {dmg} dmg → {t.Name} HP:{t.HP}/{t.MaxHP}");
                 if (!t.Alive) HandleKill(t);
             }
-            else Console.WriteLine("  Miss!");
+            else if (a < d) Console.WriteLine("  Miss!");
             pen--;
         }
     }
@@ -1235,7 +1252,7 @@ class CombatSession
             int aRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1);
             int aDdg = Rng.Next(e.MinDodge, e.MaxDodge + 1) - 2;
             Console.WriteLine($"  Attack: {aRoll} vs {e.Name}'s dodge-2 ({aDdg}).");
-            if (aRoll >= aDdg)
+            if (aRoll >= aDdg && !EnemyBlocks(e, aRoll))
             {
                 int dmg = Rng.Next(P.MinDamage, P.MaxDamage + 1);
                 e.HP -= dmg;
@@ -1243,7 +1260,8 @@ class CombatSession
                 if (!e.Alive) HandleKill(e);
                 return true;
             }
-            Console.WriteLine($"  Missed — {e.Name} gets away.");
+            if (aRoll < aDdg) Console.WriteLine($"  Missed — {e.Name} gets away.");
+            else Console.WriteLine($"  Blocked — {e.Name} gets away.");
             return false;
         }
     }
