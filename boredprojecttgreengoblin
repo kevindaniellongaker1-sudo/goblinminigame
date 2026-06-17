@@ -74,13 +74,21 @@ List<Enemy> BuildGroup(int waveNum, Random r)
         for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
         for (int i = 0; i < gobs; i++) g.Add(new Goblin(r, $"Goblin {i + 1}"));
     }
-    else
+    else if (waveNum <= 30)
     {
-        // Wave 21+: orcs replace hobgoblins one-for-one each wave
+        // Wave 21-30: orcs replace hobgoblins one-for-one
         int orcs = waveNum - 20;
         int hobs = Math.Max(0, 10 - orcs);
         for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
         for (int i = 0; i < orcs; i++) g.Add(new Orc(r, $"Orc {i + 1}"));
+    }
+    else
+    {
+        // Wave 31+: trolls replace orcs one-for-one
+        int trolls = waveNum - 30;
+        int orcs = Math.Max(0, 10 - trolls);
+        for (int i = 0; i < orcs; i++) g.Add(new Orc(r, $"Orc {i + 1}"));
+        for (int i = 0; i < trolls; i++) g.Add(new Troll(r, $"Troll {i + 1}"));
     }
     return g;
 }
@@ -370,7 +378,12 @@ abstract class Enemy
     public int GrappleDmgMin = 1, GrappleDmgMax = 6;
     public bool HasDoubleTap = false;
     public bool HasBlock = false;
+    public bool HasParry = false;
     public int BlockMin = 1, BlockMax = 6;
+    public bool MagicResistant = false;
+    public bool HitBySpell = false;
+    public bool HasKick = false;
+    public int KickDmgMin = 1, KickDmgMax = 4;
 
     public Enemy(string name, string typeName) { Name = name; TypeName = typeName; }
 
@@ -394,6 +407,7 @@ abstract class Enemy
     public void EndOfRound()
     {
         OffBalance = false;
+        HitBySpell = false;
         DodgePenalty = Math.Max(0, DodgePenalty - 2);
         AttackPenalty = Math.Max(0, AttackPenalty - 2);
         Charmed = false;
@@ -439,6 +453,24 @@ class Orc : Enemy
         HasDoubleTap = true;
         HasBlock = true; BlockMin = 2; BlockMax = 10;
         XPValue = 30;
+    }
+}
+
+class Troll : Enemy
+{
+    public Troll(Random rng, string name) : base(name, "Troll")
+    {
+        MaxHP = 28; HP = MaxHP;
+        MinAttack = 2; MaxAttack = 12;
+        MinDamage = 3; MaxDamage = 12;
+        MinDodge = 1; MaxDodge = 6;
+        MinGrapple = 2; MaxGrapple = 12;
+        GrappleDmgMin = 2; GrappleDmgMax = 6;
+        HasDoubleTap = true;
+        HasParry = true; BlockMin = 2; BlockMax = 12;
+        HasKick = true; KickDmgMin = 2; KickDmgMax = 6;
+        MagicResistant = true;
+        XPValue = 45;
     }
 }
 
@@ -988,15 +1020,17 @@ class CombatSession
         if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") FreeAttack(target);
     }
 
-    // Returns true if the enemy successfully blocks the incoming attack.
+    // Returns true if the enemy successfully blocks or parries the incoming attack.
     // Not available when knocked down, KO'd, or off-balance.
     bool EnemyBlocks(Enemy target, int atkRoll)
     {
-        if (!target.HasBlock || target.KnockedDown || target.KnockedOut || target.OffBalance) return false;
+        if (!target.HasBlock && !target.HasParry) return false;
+        if (target.KnockedDown || target.KnockedOut || target.OffBalance) return false;
         int bRoll = Rng.Next(target.BlockMin, target.BlockMax + 1);
-        Console.WriteLine($"  {target.Name} blocks! Roll {bRoll} vs your attack {atkRoll}.");
-        if (bRoll >= atkRoll) { Console.WriteLine($"  BLOCKED!"); return true; }
-        Console.WriteLine($"  Block failed! ({bRoll} < {atkRoll})");
+        string verb = target.HasParry ? "parries" : "blocks";
+        Console.WriteLine($"  {target.Name} {verb}! Roll {bRoll} vs your attack {atkRoll}.");
+        if (bRoll >= atkRoll) { Console.WriteLine($"  {(target.HasParry ? "PARRIED" : "BLOCKED")}!"); return true; }
+        Console.WriteLine($"  {(target.HasParry ? "Parry" : "Block")} failed! ({bRoll} < {atkRoll})");
         return false;
     }
 
@@ -1156,12 +1190,14 @@ class CombatSession
                 foreach (var e in targets)
                 {
                     int dmg = Rng.Next(4, 13);
-                    e.HP -= dmg;
+                    if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
+                    e.HP -= dmg; e.HitBySpell = true;
                     Console.WriteLine($"    {e.Name} takes {dmg} fire damage! HP:{e.HP}/{e.MaxHP}");
                     if (!e.Alive) { HandleKill(e); continue; }
-                    e.BurningDmg = Math.Max(e.BurningDmg, burnDmg);
+                    int eBurnDmg = e.MagicResistant ? Math.Max(1, burnDmg / 2) : burnDmg;
+                    e.BurningDmg = Math.Max(e.BurningDmg, eBurnDmg);
                     e.BurningTurns = Math.Max(e.BurningTurns, burnTurns);
-                    Console.WriteLine($"    {e.Name} BURNING! ({burnDmg}/action × {burnTurns} actions)");
+                    Console.WriteLine($"    {e.Name} BURNING! ({eBurnDmg}/action × {burnTurns} actions)");
                 }
                 break;
             }
@@ -1173,7 +1209,8 @@ class CombatSession
                 foreach (var e in targets)
                 {
                     int dmg = Rng.Next(3, 7);
-                    e.HP -= dmg;
+                    if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
+                    e.HP -= dmg; e.HitBySpell = true;
                     Console.WriteLine($"    {e.Name} struck for {dmg} lightning! HP:{e.HP}/{e.MaxHP}");
                     if (!e.Alive) HandleKill(e);
                 }
@@ -1196,12 +1233,14 @@ class CombatSession
                 foreach (var e in targets)
                 {
                     int dmg = Rng.Next(2, 9);
-                    e.HP -= dmg;
+                    if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
+                    e.HP -= dmg; e.HitBySpell = true;
                     Console.WriteLine($"    {e.Name} takes {dmg} frost! HP:{e.HP}/{e.MaxHP}");
                     if (!e.Alive) { HandleKill(e); continue; }
-                    e.FrostPenalty = Math.Max(e.FrostPenalty, frostPen);
+                    int eFrostPen = e.MagicResistant ? Math.Max(1, frostPen / 2) : frostPen;
+                    e.FrostPenalty = Math.Max(e.FrostPenalty, eFrostPen);
                     e.FrostTurns = Math.Max(e.FrostTurns, frostTurns);
-                    Console.WriteLine($"    {e.Name} FROZEN! (-{frostPen} on rolls for {frostTurns} turns)");
+                    Console.WriteLine($"    {e.Name} FROZEN! (-{eFrostPen} on rolls for {frostTurns} turns)");
                 }
                 break;
             }
@@ -1241,7 +1280,7 @@ class CombatSession
             }
 
             // Stand up if knocked down
-            int actions = e is Hobgoblin ? 3 : 2;
+            int actions = (e is Hobgoblin || e is Orc || e is Troll) ? 3 : 2;
             if (e.KnockedDown)
             {
                 Console.WriteLine($"  {e.Name} stands up (1 action used).");
@@ -1406,6 +1445,91 @@ class CombatSession
                 continue;
             }
 
+            // ── Troll AI ───────────────────────────────────────────────────
+            if (e is Troll)
+            {
+                // Update consecutive-damage counter (4 turns triggers grapple)
+                if (e.HP < e.HpAtTurnStart) e.ConsecutiveDmgTurns++;
+                else e.ConsecutiveDmgTurns = 0;
+                if (e.ConsecutiveDmgTurns >= 4) { e.GrappleNextTurn = true; e.ConsecutiveDmgTurns = 0; }
+                // Spell hit also triggers grapple
+                if (e.HitBySpell) { e.GrappleNextTurn = true; }
+
+                // Free action: regenerate 2-4 HP
+                int regen = Rng.Next(2, 5);
+                e.HP = Math.Min(e.HP + regen, e.MaxHP);
+                Console.WriteLine($"  {e.Name} regenerates {regen} HP! (HP:{e.HP}/{e.MaxHP})");
+
+                // HP <= 4: roll 1d4 — 1=grapple, 2-4=flee
+                if (e.HP <= 4 && !e.HasFledBefore)
+                {
+                    int dieRoll = Rng.Next(1, 5);
+                    if (dieRoll == 1)
+                    {
+                        Console.WriteLine($"  {e.Name} (desperate) grapples!");
+                        OrcGrappleAction(e);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  {e.Name} tries to flee!");
+                        bool stopped = PlayerFreeActionOnFleeingEnemy(e);
+                        if (!stopped)
+                        {
+                            e.HasFledBefore = true;
+                            e.Alive = false;
+                            int totalHeal = Rng.Next(2, 5) + Rng.Next(2, 5) + Rng.Next(2, 5) + Rng.Next(1, 5);
+                            var returnedTroll = new Troll(Rng, e.Name);
+                            returnedTroll.HP = Math.Min(e.HP + totalHeal, returnedTroll.MaxHP);
+                            Console.WriteLine($"  {e.Name} escapes! Returns in 3 turns healed {totalHeal} HP.");
+                            var batch = new List<Enemy> { returnedTroll };
+                            int reinfRoll = Rng.Next(1, 7);
+                            switch (reinfRoll)
+                            {
+                                case 1:
+                                    batch.Add(new Troll(Rng, "Troll Backup"));
+                                    Console.WriteLine($"  ...with another Troll!");
+                                    break;
+                                case 2: case 3:
+                                    batch.Add(new Orc(Rng, "Orc A")); batch.Add(new Orc(Rng, "Orc B"));
+                                    Console.WriteLine($"  ...with two Orcs!");
+                                    break;
+                                case 4: case 5:
+                                    for (int hi = 0; hi < 3; hi++) batch.Add(new Hobgoblin(Rng, $"Hobgoblin {hi+1}"));
+                                    Console.WriteLine($"  ...with three Hobgoblins!");
+                                    break;
+                                default:
+                                    for (int gi = 0; gi < 5; gi++) batch.Add(new Goblin(Rng, $"Goblin {gi+1}"));
+                                    Console.WriteLine($"  ...with five Goblins!");
+                                    break;
+                            }
+                            Pending.Add((batch, 3));
+                        }
+                    }
+                    continue;
+                }
+
+                // HP >= 5: grapple if triggered, then attack
+                if (e.GrappleNextTurn && actions > 0)
+                {
+                    e.GrappleNextTurn = false;
+                    OrcGrappleAction(e);
+                    actions--;
+                }
+
+                for (int i = 0; i < actions && P.HP > 0; i++)
+                {
+                    if (P.IsGrappled && P.GrappledBy == e)
+                        OrcMaintainGrapple(e);
+                    else
+                    {
+                        EnemyAttack(e);
+                        if (e.Alive && P.HP > 0) EnemyKick(e);
+                    }
+                }
+
+                continue;
+            }
+
             // Normal goblin: attack with all remaining actions
             for (int i = 0; i < actions && P.HP > 0; i++)
                 EnemyAttack(e);
@@ -1444,6 +1568,23 @@ class CombatSession
         Console.WriteLine($"  Break-free roll: your {pGr} vs {e.Name}'s {eGr}.");
         if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
         else Console.WriteLine("  Still held!");
+    }
+
+    void EnemyKick(Enemy e)
+    {
+        if (!e.HasKick || !e.Alive || P.HP <= 0) return;
+        int kAtk = Rng.Next(1, 7);
+        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+        Console.WriteLine($"  {e.Name} kicks! Roll {kAtk} vs your dodge {pDdg}.");
+        if (kAtk >= pDdg)
+        {
+            int kDmg = Rng.Next(e.KickDmgMin, e.KickDmgMax + 1);
+            if (P.Defending) kDmg = Math.Max(1, kDmg / 2);
+            if (P.ArmorDamageReduction > 0) kDmg = Math.Max(1, kDmg - P.ArmorDamageReduction);
+            P.HP -= kDmg;
+            Console.WriteLine($"  Kick HIT! {kDmg} damage. HP:{P.HP}/{P.MaxHP}");
+        }
+        else Console.WriteLine("  Kick missed!");
     }
 
     // Player gets one free action when an enemy tries to flee.
