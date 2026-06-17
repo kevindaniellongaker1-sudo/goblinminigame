@@ -11,15 +11,49 @@ Console.WriteLine("════════════════════�
 Console.WriteLine("          GOBLIN SLAYER           ");
 Console.WriteLine("══════════════════════════════════");
 
-if (File.Exists("goblinslayer.sav"))
+ShowHiscores();
+
+Console.WriteLine("\n[N]ew game  [L]oad saved game");
+Console.Write("Choice: ");
+string startChoice = (Console.ReadLine() ?? "n").Trim().ToLower();
+
+if (startChoice.StartsWith("l"))
 {
-    Console.Write("\nSave file found! [L]oad it or start [N]ew game? ");
-    string lc = (Console.ReadLine() ?? "l").Trim().ToLower();
-    if (!lc.StartsWith("n"))
+    var saves = ListSaves();
+    if (!saves.Any())
     {
-        if (TryLoadGame(player))
-            Console.WriteLine($"  Loaded! Level {player.Level}, HP {player.HP}/{player.MaxHP}, Groups defeated: {groupsDefeated}");
+        Console.WriteLine("  No saved games found. Starting new game.");
+        AskName(player);
     }
+    else
+    {
+        Console.WriteLine("\n── Saved Games ──");
+        for (int i = 0; i < saves.Count; i++)
+            Console.WriteLine($"  [{i + 1}] {saves[i].name,-22}  Wave {saves[i].wave,3}  Level {saves[i].level}");
+        Console.Write("Enter number or name to load (Enter = new game): ");
+        string pick = (Console.ReadLine() ?? "").Trim();
+
+        bool loaded = false;
+        if (int.TryParse(pick, out int idx) && idx >= 1 && idx <= saves.Count)
+            loaded = TryLoadGame(player, saves[idx - 1].path);
+        else if (!string.IsNullOrEmpty(pick))
+        {
+            var match = saves.FirstOrDefault(s => s.name.Equals(pick, StringComparison.OrdinalIgnoreCase));
+            if (match.path != null) loaded = TryLoadGame(player, match.path);
+        }
+
+        if (loaded)
+            Console.WriteLine($"  Loaded! Level {player.Level}, HP {player.HP}/{player.MaxHP}, Wave {groupsDefeated + 1}");
+        else
+        {
+            Console.WriteLine("  Starting new game.");
+            AskName(player);
+        }
+    }
+}
+else
+{
+    AskName(player);
 }
 
 Console.WriteLine($"\nYou are {player.Name}!");
@@ -42,7 +76,8 @@ while (true)
     if (!survived)
     {
         Console.WriteLine($"\n╔═══ YOU HAVE FALLEN ═══╗");
-        Console.WriteLine($"  Groups defeated: {groupsDefeated}  Level: {player.Level}");
+        Console.WriteLine($"  Reached wave {waveNum}  Groups defeated: {groupsDefeated}  Level: {player.Level}");
+        UpdateHiscores(player.Name, waveNum, player.Level);
         break;
     }
 
@@ -342,8 +377,24 @@ void LearnSpell(Player p)
     else Console.WriteLine("  Invalid.");
 }
 
+void AskName(Player p)
+{
+    Console.Write("\nEnter your name (or Enter for 'Goblin Slayer'): ");
+    string input = (Console.ReadLine() ?? "").Trim();
+    if (!string.IsNullOrEmpty(input)) p.Name = input;
+}
+
+string SaveFilePath(string name)
+{
+    string safe = new string(name.Where(c => char.IsLetterOrDigit(c)).ToArray());
+    if (string.IsNullOrEmpty(safe)) safe = "default";
+    Directory.CreateDirectory("saves");
+    return Path.Combine("saves", $"{safe}.sav");
+}
+
 void SaveGame(Player p, int groups)
 {
+    string path = SaveFilePath(p.Name);
     var lines = new List<string>
     {
         $"Name={p.Name}",
@@ -373,15 +424,15 @@ void SaveGame(Player p, int groups)
         $"KnownSpells={string.Join("|", p.KnownSpells)}",
         $"GroupsDefeated={groups}",
     };
-    File.WriteAllLines("goblinslayer.sav", lines);
-    Console.WriteLine("  ✓ Game saved to goblinslayer.sav");
+    File.WriteAllLines(path, lines);
+    Console.WriteLine($"  ✓ Game saved ({p.Name}).");
 }
 
-bool TryLoadGame(Player p)
+bool TryLoadGame(Player p, string filePath)
 {
     try
     {
-        var dict = File.ReadAllLines("goblinslayer.sav")
+        var dict = File.ReadAllLines(filePath)
             .Where(l => l.Contains('='))
             .ToDictionary(
                 l => l[..l.IndexOf('=')],
@@ -432,6 +483,88 @@ bool TryLoadGame(Player p)
         Console.WriteLine("  Save file corrupted. Starting fresh.");
         return false;
     }
+}
+
+List<(string name, int wave, int level, string path)> ListSaves()
+{
+    var result = new List<(string, int, int, string)>();
+    if (!Directory.Exists("saves")) return result;
+    foreach (var f in Directory.GetFiles("saves", "*.sav"))
+    {
+        try
+        {
+            var dict = File.ReadAllLines(f)
+                .Where(l => l.Contains('='))
+                .ToDictionary(l => l[..l.IndexOf('=')], l => l[(l.IndexOf('=') + 1)..]);
+            string name = dict.GetValueOrDefault("Name", "Unknown");
+            int gd = int.TryParse(dict.GetValueOrDefault("GroupsDefeated", "0"), out int g) ? g : 0;
+            int level = int.TryParse(dict.GetValueOrDefault("Level", "1"), out int lv) ? lv : 1;
+            result.Add((name, gd + 1, level, f));
+        }
+        catch { }
+    }
+    return result.OrderByDescending(s => s.Item2).ThenByDescending(s => s.Item3).ToList();
+}
+
+void ShowHiscores()
+{
+    const string scorePath = "goblinslayer_hiscores.sav";
+    if (!File.Exists(scorePath)) return;
+    try
+    {
+        var scores = new List<(string name, int wave, int level)>();
+        foreach (var line in File.ReadAllLines(scorePath))
+        {
+            string nm = "Unknown"; int wv = 0; int lv = 1;
+            foreach (var part in line.Split('|'))
+            {
+                int eq = part.IndexOf('=');
+                if (eq < 0) continue;
+                string k = part[..eq], v = part[(eq + 1)..];
+                if (k == "Name") nm = v;
+                else if (k == "Wave" && int.TryParse(v, out int w)) wv = w;
+                else if (k == "Level" && int.TryParse(v, out int l)) lv = l;
+            }
+            if (wv > 0) scores.Add((nm, wv, lv));
+        }
+        var top = scores.OrderByDescending(s => s.wave).ThenByDescending(s => s.level).Take(3).ToList();
+        if (!top.Any()) return;
+        Console.WriteLine("\n── Hall of the Fallen ── Top Waves ──");
+        for (int i = 0; i < top.Count; i++)
+            Console.WriteLine($"  #{i + 1}  {top[i].name,-22}  Wave {top[i].wave,3}  Level {top[i].level,3}");
+    }
+    catch { }
+}
+
+void UpdateHiscores(string name, int wave, int level)
+{
+    const string scorePath = "goblinslayer_hiscores.sav";
+    var scores = new List<(string name, int wave, int level)>();
+    if (File.Exists(scorePath))
+    {
+        try
+        {
+            foreach (var line in File.ReadAllLines(scorePath))
+            {
+                string nm = "Unknown"; int wv = 0; int lv = 1;
+                foreach (var part in line.Split('|'))
+                {
+                    int eq = part.IndexOf('=');
+                    if (eq < 0) continue;
+                    string k = part[..eq], v = part[(eq + 1)..];
+                    if (k == "Name") nm = v;
+                    else if (k == "Wave" && int.TryParse(v, out int w)) wv = w;
+                    else if (k == "Level" && int.TryParse(v, out int l)) lv = l;
+                }
+                if (wv > 0) scores.Add((nm, wv, lv));
+            }
+        }
+        catch { }
+    }
+    scores.Add((name, wave, level));
+    scores = scores.OrderByDescending(s => s.wave).ThenByDescending(s => s.level).Take(10).ToList();
+    File.WriteAllLines(scorePath, scores.Select(s => $"Name={s.name}|Wave={s.wave}|Level={s.level}"));
+    Console.WriteLine($"  Score recorded: {name}  Wave {wave}  Level {level}");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
