@@ -64,13 +64,22 @@ List<Enemy> BuildGroup(int waveNum, Random r)
 {
     var g = new List<Enemy>();
     if (waveNum <= 10)
+    {
         for (int i = 0; i < waveNum; i++) g.Add(new Goblin(r, $"Goblin {i + 1}"));
-    else
+    }
+    else if (waveNum <= 20)
     {
         int hobs = Math.Min(waveNum - 10, 10);
         int gobs = Math.Max(0, 21 - waveNum);
         for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
         for (int i = 0; i < gobs; i++) g.Add(new Goblin(r, $"Goblin {i + 1}"));
+    }
+    else
+    {
+        // Wave 21+: 10 hobgoblins + growing number of orcs
+        int orcs = Math.Min(waveNum - 20, 10);
+        for (int i = 0; i < 10; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
+        for (int i = 0; i < orcs; i++) g.Add(new Orc(r, $"Orc {i + 1}"));
     }
     return g;
 }
@@ -187,6 +196,8 @@ class Player
     public bool Defending = false;
     public bool HasGoblinSword = false;
     public int OffhandMaxDamage = 4;
+    public bool IsGrappled = false;
+    public Enemy? GrappledBy = null;
     public List<string> Feats = new();
     public Dictionary<string, int> FeatStacks = new();
 
@@ -235,6 +246,9 @@ abstract class Enemy
     public int DodgePenalty = 0;
     public int AttackPenalty = 0;
     public int WeaponDistance = 0;
+    public int MinGrapple = 1, MaxGrapple = 6;
+    public int GrappleDmgMin = 1, GrappleDmgMax = 6;
+    public bool HasDoubleTap = false;
 
     public Enemy(string name, string typeName) { Name = name; TypeName = typeName; }
 
@@ -282,7 +296,24 @@ class Hobgoblin : Enemy
         MinAttack = 1; MaxAttack = 8;
         MinDamage = 1; MaxDamage = 8;
         MinDodge = 2; MaxDodge = 8;
+        MinGrapple = 2; MaxGrapple = 8;
+        GrappleDmgMin = 1; GrappleDmgMax = 4;
         XPValue = 20;
+    }
+}
+
+class Orc : Enemy
+{
+    public Orc(Random rng, string name) : base(name, "Orc")
+    {
+        MaxHP = 25; HP = MaxHP;
+        MinAttack = 3; MaxAttack = 9;
+        MinDamage = 2; MaxDamage = 10;
+        MinDodge = 2; MaxDodge = 8;
+        MinGrapple = 3; MaxGrapple = 12;
+        GrappleDmgMin = 2; GrappleDmgMax = 8;
+        HasDoubleTap = true;
+        XPValue = 40;
     }
 }
 
@@ -424,6 +455,19 @@ class CombatSession
             if (!alive.Any()) break;
 
             Console.WriteLine($"\n  [Actions: {actLeft}]");
+
+            // While grappled, auto-roll each action to break free
+            if (P.IsGrappled && P.GrappledBy != null && P.GrappledBy.Alive)
+            {
+                int minG = 1 + P.GetFeatStacks("Closeliner");
+                int pGr = Rng.Next(minG, 7);
+                int eGr = Rng.Next(P.GrappledBy.MinGrapple, P.GrappledBy.MaxGrapple + 1);
+                Console.WriteLine($"  [GRAPPLED by {P.GrappledBy.Name}] Break-free: your {pGr} vs their {eGr}.");
+                if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
+                else Console.WriteLine("  Still held — you can act but cannot run.");
+            }
+            else if (P.IsGrappled) { P.IsGrappled = false; P.GrappledBy = null; } // grappler died
+
             var opts = BuildOpts(justBlocked, alive);
             for (int i = 0; i < opts.Count; i++) Console.Write($"[{i + 1}]{opts[i]}  ");
             Console.WriteLine();
@@ -466,6 +510,7 @@ class CombatSession
 
                 case "run":
                 {
+                    if (P.IsGrappled) { Console.WriteLine("  You can't run while grappled!"); continue; }
                     Console.WriteLine("  You try to escape!");
                     bool blocked = false;
                     foreach (var e in alive)
@@ -770,6 +815,7 @@ class CombatSession
     {
         Console.WriteLine($"  {e.Name} is defeated!");
         GainXP(e.XPValue);
+        if (P.IsGrappled && P.GrappledBy == e) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You are no longer grappled."); }
         var others = Active.Where(x => x.Alive && x != e).ToList();
         if (P.HasFeat("Thin the Herd") && others.Any())
         {
@@ -996,42 +1042,99 @@ class CombatSession
                         e.Alive = false;
                         int healAmount = Rng.Next(1, 5);
                         var returnedHob = new Hobgoblin(Rng, e.Name);
-                        returnedHob.HP = Math.Min(returnedHob.MaxHP, healAmount);
-                        Pending.Add((new List<Enemy>
-                        {
-                            returnedHob,
-                            new Hobgoblin(Rng, "Hobgoblin Reinforcement")
-                        }, 2));
+                        returnedHob.HP = healAmount;
+                        Pending.Add((new List<Enemy> { returnedHob, new Hobgoblin(Rng, "Hobgoblin Reinforcement") }, 2));
                         Console.WriteLine($"  {e.Name} escapes! Will return healed with a friend.");
                     }
                     continue;
                 }
 
-                // Grapple if triggered by 3 consecutive turns of taking damage
+                // Grapple triggered by 3 consecutive turns of taking damage
                 if (e.GrappleNextTurn && actions > 0)
                 {
                     e.GrappleNextTurn = false;
-                    int gAtk = Rng.Next(2, 9) - e.AttackPenalty;
+                    int gAtk = Rng.Next(e.MinGrapple, e.MaxGrapple + 1) - e.AttackPenalty;
                     int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
-                    Console.WriteLine($"  {e.Name} goes for a grapple! {gAtk} vs your dodge {pDdg}.");
+                    Console.WriteLine($"  {e.Name} grapples! {gAtk} vs your dodge {pDdg}.");
                     if (gAtk >= pDdg)
                     {
-                        int gDmg = Rng.Next(1, 5);
+                        int gDmg = Rng.Next(e.GrappleDmgMin, e.GrappleDmgMax + 1);
                         P.HP -= gDmg;
-                        Console.WriteLine($"  Grappled! You take {gDmg} crush damage. HP:{P.HP}/{P.MaxHP}");
+                        Console.WriteLine($"  Grappled! {gDmg} crush damage. HP:{P.HP}/{P.MaxHP}");
                     }
                     else Console.WriteLine($"  Grapple attempt failed!");
                     actions--;
                 }
 
-                // HP > 6: attack with remaining actions
-                for (int i = 0; i < actions && P.HP > 0 && e.HP > 6; i++)
+                // HP > 6: attack; HP <= 6 but > 5: still attack (not fleeing territory)
+                for (int i = 0; i < actions && P.HP > 0; i++)
                     EnemyAttack(e);
 
-                // HP 6 or below but > 5: still attacks if not fleeing
-                if (e.HP <= 6 && e.HP > 5)
-                    for (int i = 0; i < actions && P.HP > 0; i++)
+                continue;
+            }
+
+            // ── Orc AI ─────────────────────────────────────────────────────
+            if (e is Orc)
+            {
+                // Update consecutive-damage counter (4 turns triggers grapple)
+                if (e.HP < e.HpAtTurnStart) e.ConsecutiveDmgTurns++;
+                else e.ConsecutiveDmgTurns = 0;
+                if (e.ConsecutiveDmgTurns >= 4) { e.GrappleNextTurn = true; e.ConsecutiveDmgTurns = 0; }
+
+                // HP <= 5: roll 1-2 → run (1) or grapple (2)
+                if (e.HP <= 5 && !e.HasFledBefore)
+                {
+                    int roll = Rng.Next(1, 3);
+                    if (roll == 1)
+                    {
+                        Console.WriteLine($"  {e.Name} tries to run!");
+                        bool stopped = PlayerFreeActionOnFleeingEnemy(e);
+                        if (!stopped)
+                        {
+                            e.HasFledBefore = true;
+                            e.Alive = false;
+                            int healAmt = Rng.Next(2, 7);
+                            int reinfRoll = Rng.Next(1, 6); // 1-2 = orc, 3-5 = two hobgoblins
+                            var returnedOrc = new Orc(Rng, e.Name);
+                            returnedOrc.HP = healAmt;
+                            if (reinfRoll <= 2)
+                            {
+                                Console.WriteLine($"  {e.Name} will return with another Orc in 3 turns!");
+                                Pending.Add((new List<Enemy> { returnedOrc, new Orc(Rng, "Orc Reinforcement") }, 3));
+                            }
+                            else
+                            {
+                                Console.WriteLine($"  {e.Name} will return with two Hobgoblins in 3 turns!");
+                                Pending.Add((new List<Enemy> { returnedOrc, new Hobgoblin(Rng, "Hobgoblin A"), new Hobgoblin(Rng, "Hobgoblin B") }, 3));
+                            }
+                        }
+                        continue;
+                    }
+                    else
+                    {
+                        // Grapple attempt
+                        OrcGrappleAction(e);
+                        actions--;
+                        if (actions <= 0) continue;
+                    }
+                }
+
+                // Grapple triggered by 4 consecutive damage turns
+                if (e.GrappleNextTurn && actions > 0)
+                {
+                    e.GrappleNextTurn = false;
+                    OrcGrappleAction(e);
+                    actions--;
+                }
+
+                // HP >= 6: attack with remaining actions (maintain grapple if holding player)
+                for (int i = 0; i < actions && P.HP > 0; i++)
+                {
+                    if (P.IsGrappled && P.GrappledBy == e)
+                        OrcMaintainGrapple(e);
+                    else if (e.HP >= 6)
                         EnemyAttack(e);
+                }
 
                 continue;
             }
@@ -1040,6 +1143,40 @@ class CombatSession
             for (int i = 0; i < actions && P.HP > 0; i++)
                 EnemyAttack(e);
         }
+    }
+
+    void OrcGrappleAction(Enemy e)
+    {
+        if (P.IsGrappled && P.GrappledBy == e)
+        {
+            OrcMaintainGrapple(e);
+        }
+        else
+        {
+            int gAtk = Rng.Next(e.MinGrapple, e.MaxGrapple + 1) - e.AttackPenalty;
+            int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+            Console.WriteLine($"  {e.Name} goes for a grapple! {gAtk} vs your dodge {pDdg}.");
+            if (gAtk >= pDdg)
+            {
+                P.IsGrappled = true; P.GrappledBy = e;
+                Console.WriteLine($"  {e.Name} grabs you!");
+            }
+            else Console.WriteLine($"  Grapple missed!");
+        }
+    }
+
+    void OrcMaintainGrapple(Enemy e)
+    {
+        int gDmg = Rng.Next(e.GrappleDmgMin, e.GrappleDmgMax + 1);
+        P.HP -= gDmg;
+        Console.WriteLine($"  {e.Name} crushes you for {gDmg} damage! HP:{P.HP}/{P.MaxHP}");
+        // Player rolls to break free each grapple action
+        int minG = 1 + P.GetFeatStacks("Closeliner");
+        int pGr = Rng.Next(minG, 7);
+        int eGr = Rng.Next(e.MinGrapple, e.MaxGrapple + 1);
+        Console.WriteLine($"  Break-free roll: your {pGr} vs {e.Name}'s {eGr}.");
+        if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
+        else Console.WriteLine("  Still held!");
     }
 
     // Player gets one free action when an enemy tries to flee.
@@ -1095,6 +1232,21 @@ class CombatSession
             if (P.Defending) dmg = Math.Max(1, dmg / 2);
             Console.WriteLine($"  HIT! You take {dmg} damage. HP: {P.HP - dmg}/{P.MaxHP}");
             P.HP -= dmg;
+            // Double Tap off-hand
+            if (e.HasDoubleTap && P.HP > 0)
+            {
+                int ofAtk = Rng.Next(1, 7) - e.AttackPenalty;
+                int ofDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+                Console.WriteLine($"  {e.Name} off-hand! Roll {ofAtk} vs your dodge {ofDdg}.");
+                if (ofAtk >= ofDdg)
+                {
+                    int ofDmg = Rng.Next(1, 5);
+                    if (P.Defending) ofDmg = Math.Max(1, ofDmg / 2);
+                    Console.WriteLine($"  Off-hand HIT! {ofDmg} damage. HP:{P.HP - ofDmg}/{P.MaxHP}");
+                    P.HP -= ofDmg;
+                }
+                else Console.WriteLine("  Off-hand miss!");
+            }
         }
         else
         {
