@@ -1,5 +1,5 @@
 @echo off
-title Goblin Slayer
+title One Who Stands Against The Horde (OWSATH)
 cd /d "%~dp0"
 
 where dotnet >nul 2>&1

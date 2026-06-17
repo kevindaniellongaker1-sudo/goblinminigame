@@ -7,9 +7,9 @@ var rng = new Random();
 var player = new Player(rng);
 int groupsDefeated = 0;
 
-Console.WriteLine("══════════════════════════════════");
-Console.WriteLine("          GOBLIN SLAYER           ");
-Console.WriteLine("══════════════════════════════════");
+Console.WriteLine("═══════════════════════════════════════════════════════");
+Console.WriteLine("   One Who Stands Against The Horde  (OWSATH)       ");
+Console.WriteLine("═══════════════════════════════════════════════════════");
 
 ShowHiscores();
 
@@ -379,7 +379,7 @@ void LearnSpell(Player p)
 
 void AskName(Player p)
 {
-    Console.Write("\nEnter your name (or Enter for 'Goblin Slayer'): ");
+    Console.Write("\nEnter your name (or Enter for 'The Lone Warrior'): ");
     string input = (Console.ReadLine() ?? "").Trim();
     if (!string.IsNullOrEmpty(input)) p.Name = input;
 }
@@ -508,7 +508,7 @@ List<(string name, int wave, int level, string path)> ListSaves()
 
 void ShowHiscores()
 {
-    const string scorePath = "goblinslayer_hiscores.sav";
+    const string scorePath = "owsath_hiscores.sav";
     if (!File.Exists(scorePath)) return;
     try
     {
@@ -538,7 +538,7 @@ void ShowHiscores()
 
 void UpdateHiscores(string name, int wave, int level)
 {
-    const string scorePath = "goblinslayer_hiscores.sav";
+    const string scorePath = "owsath_hiscores.sav";
     var scores = new List<(string name, int wave, int level)>();
     if (File.Exists(scorePath))
     {
@@ -573,7 +573,7 @@ void UpdateHiscores(string name, int wave, int level)
 
 class Player
 {
-    public string Name = "Goblin Slayer";
+    public string Name = "The Lone Warrior";
     public int HP, MaxHP;
     public int MinAttack = 1, MaxAttack = 6;
     public int MinDamage = 1, MaxDamage = 9;
