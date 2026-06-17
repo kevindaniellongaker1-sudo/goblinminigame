@@ -148,26 +148,26 @@ List<Enemy> BuildGroup(int waveNum, Random r)
     }
     else
     {
-        // Wave 41+: ogres replace trolls one-for-one; each ogre brings companions (1d6)
+        // Wave 41+: ogres replace trolls one-for-one; each ogre brings companions (1d8)
         int ogres = Math.Min(waveNum - 40, 10);
         int trolls = Math.Max(0, 10 - ogres);
         for (int i = 0; i < trolls; i++) g.Add(new Troll(r, $"Troll {i + 1}"));
         for (int i = 0; i < ogres; i++)
         {
             g.Add(new Ogre(r, $"Ogre {i + 1}"));
-            int cr = r.Next(1, 7);
+            int cr = r.Next(1, 9);
             switch (cr)
             {
                 case 1: g.Add(new Ogre(r, $"Ogre Extra {i + 1}")); break;
                 case 2: case 3: for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc Extra {i * 3 + j + 1}")); break;
                 case 4: g.Add(new Troll(r, $"Troll Extra A {i + 1}")); g.Add(new Troll(r, $"Troll Extra B {i + 1}")); break;
                 case 5: for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
-                default: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Gob Extra {i * 5 + j + 1}")); break;
+                case 6: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Gob Extra {i * 5 + j + 1}")); break;
+                case 7: g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); break;
+                default: g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); break;
             }
         }
     }
-    g.Add(new SpellGoblin(r, "Spell Goblin A"));
-    g.Add(new SpellGoblin(r, "Spell Goblin B"));
     return g;
 }
 
@@ -1895,19 +1895,26 @@ class CombatSession
                             e.HasFledBefore = true;
                             e.Alive = false;
                             int healAmt = Rng.Next(2, 7);
-                            int reinfRoll = Rng.Next(1, 6); // 1-2 = orc, 3-5 = two hobgoblins
+                            int reinfRoll = Rng.Next(1, 7); // 1-2 = orc, 3-5 = two hobgoblins, 6 = spell goblin
                             var returnedOrc = new Orc(Rng, e.Name);
                             returnedOrc.HP = healAmt;
+                            var orcBatch = new List<Enemy> { returnedOrc };
                             if (reinfRoll <= 2)
                             {
+                                orcBatch.Add(new Orc(Rng, "Orc Reinforcement"));
                                 Console.WriteLine($"  {e.Name} will return with another Orc in 3 turns!");
-                                Pending.Add((new List<Enemy> { returnedOrc, new Orc(Rng, "Orc Reinforcement") }, 3));
+                            }
+                            else if (reinfRoll <= 5)
+                            {
+                                orcBatch.Add(new Hobgoblin(Rng, "Hobgoblin A")); orcBatch.Add(new Hobgoblin(Rng, "Hobgoblin B"));
+                                Console.WriteLine($"  {e.Name} will return with two Hobgoblins in 3 turns!");
                             }
                             else
                             {
-                                Console.WriteLine($"  {e.Name} will return with two Hobgoblins in 3 turns!");
-                                Pending.Add((new List<Enemy> { returnedOrc, new Hobgoblin(Rng, "Hobgoblin A"), new Hobgoblin(Rng, "Hobgoblin B") }, 3));
+                                orcBatch.Add(new SpellGoblin(Rng, "Spell Goblin"));
+                                Console.WriteLine($"  {e.Name} will return with a Spell Goblin in 3 turns!");
                             }
+                            Pending.Add((orcBatch, 3));
                         }
                         continue;
                     }
@@ -1978,7 +1985,7 @@ class CombatSession
                             returnedTroll.HP = Math.Min(e.HP + totalHeal, returnedTroll.MaxHP);
                             Console.WriteLine($"  {e.Name} escapes! Returns in 3 turns healed {totalHeal} HP.");
                             var batch = new List<Enemy> { returnedTroll };
-                            int reinfRoll = Rng.Next(1, 7);
+                            int reinfRoll = Rng.Next(1, 8);
                             switch (reinfRoll)
                             {
                                 case 1:
@@ -1993,9 +2000,13 @@ class CombatSession
                                     for (int hi = 0; hi < 3; hi++) batch.Add(new Hobgoblin(Rng, $"Hobgoblin {hi+1}"));
                                     Console.WriteLine($"  ...with three Hobgoblins!");
                                     break;
-                                default:
+                                case 6:
                                     for (int gi = 0; gi < 5; gi++) batch.Add(new Goblin(Rng, $"Goblin {gi+1}"));
                                     Console.WriteLine($"  ...with five Goblins!");
+                                    break;
+                                default:
+                                    batch.Add(new SpellGoblin(Rng, "Spell Goblin"));
+                                    Console.WriteLine($"  ...with a Spell Goblin!");
                                     break;
                             }
                             Pending.Add((batch, 3));
@@ -2076,7 +2087,7 @@ class CombatSession
                                 returnedOgre.HP = Math.Min(e.HP + totalHeal, returnedOgre.MaxHP);
                                 Console.WriteLine($"  {e.Name} escapes! Returns in 4 turns.");
                                 var batch = new List<Enemy> { returnedOgre };
-                                int reinfRoll = Rng.Next(1, 9);
+                                int reinfRoll = Rng.Next(1, 10);
                                 switch (reinfRoll)
                                 {
                                     case 1: batch.Add(new Ogre(Rng, "Ogre Backup")); Console.WriteLine("  ...with another Ogre!"); break;
@@ -2086,7 +2097,8 @@ class CombatSession
                                     case 5: for (int j = 0; j < 6; j++) batch.Add(new Goblin(Rng, $"Goblin {j+1}")); Console.WriteLine("  ...with six Goblins!"); break;
                                     case 6: for (int j = 0; j < 3; j++) batch.Add(new Troll(Rng, $"Troll {j+1}")); Console.WriteLine("  ...with three Trolls!"); break;
                                     case 7: for (int j = 0; j < 4; j++) batch.Add(new Orc(Rng, $"Orc {j+1}")); Console.WriteLine("  ...with four Orcs!"); break;
-                                    default: for (int j = 0; j < 5; j++) batch.Add(new Hobgoblin(Rng, $"Hobgoblin {j+1}")); Console.WriteLine("  ...with five Hobgoblins!"); break;
+                                    case 8: for (int j = 0; j < 5; j++) batch.Add(new Hobgoblin(Rng, $"Hobgoblin {j+1}")); Console.WriteLine("  ...with five Hobgoblins!"); break;
+                                    default: batch.Add(new SpellGoblin(Rng, "Spell Goblin")); Console.WriteLine("  ...with a Spell Goblin!"); break;
                                 }
                                 Pending.Add((batch, 4));
                             }
