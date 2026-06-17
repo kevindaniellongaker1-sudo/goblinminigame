@@ -1,127 +1,994 @@
-using System.Collections;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 
-string player = "Goblin Slayer";
-int playerHP = new Random().Next(3, 13);
-string goblin = "Green Goblin";
-int goblinHP = new Random().Next(2, 9);
-bool escaped = false;
+var rng = new Random();
+var player = new Player(rng);
+int groupsDefeated = 0;
 
-Console.WriteLine($"{player} encounters a {goblin}!");
+Console.WriteLine("══════════════════════════════════");
+Console.WriteLine("          GOBLIN SLAYER           ");
+Console.WriteLine("══════════════════════════════════");
+Console.WriteLine($"\nYou are {player.Name}!");
+Console.WriteLine($"HP: {player.HP}/{player.MaxHP}\n");
 
-while (playerHP > 0 && goblinHP > 0 && !escaped)
+if (player.PendingFeats > 0) SelectFeats(player);
+
+while (true)
 {
-    Random rng = new Random();
-    int dodgeNumber = rng.Next(1, 7);
-    int attackNumber = rng.Next(1, 7);
-    int goblinAttackNumber = rng.Next(1, 7);
-    int goblinDodgeNumber = rng.Next(1, 7);
-    int damageGoblin = rng.Next(1, 7);
-    int damagePlayer = rng.Next(1, 9);
+    int waveNum = groupsDefeated + 1;
+    var group = BuildGroup(waveNum, rng);
 
-    Console.WriteLine($"\nYour HP: {playerHP} | {goblin} HP: {goblinHP}");
-    Console.WriteLine("What do you want to do? (attack, run, healing potion, defend, grapple)");
-    string action = Console.ReadLine().ToLower();
+    Console.WriteLine($"\n──────────────────────────────────");
+    Console.WriteLine($" GROUP {waveNum}: {DescribeGroup(group)}");
+    Console.WriteLine($"──────────────────────────────────");
 
-    switch (action)
+    bool survived = new CombatSession(player, group, rng, XpThreshold, GainXP).Run();
+
+    if (!survived)
     {
-        case "attack":
-            if (attackNumber >= goblinDodgeNumber)
-            {
-                Console.WriteLine($"You hit the {goblin}!");
-                goblinHP -= damagePlayer;
-                Console.WriteLine($"You dealt {damagePlayer} damage to the {goblin}.");
-            }
-            else
-            {
-                Console.WriteLine("You miss!!!");
-            }
-            if (goblinHP > 0)
-            {
-                if (goblinAttackNumber >= dodgeNumber)
-                {
-                    Console.WriteLine($"{goblin} attacks you!");
-                    playerHP -= damageGoblin;
-                    Console.WriteLine($"You took {damageGoblin} damage!");
-                }
-                else
-                {
-                    Console.WriteLine($"{goblin} missed the attack!");
-                }
-            }
-            break;
-        case "run":
-            if (dodgeNumber >= 4)
-            {
-                Console.WriteLine("You successfully run away!!");
-                escaped = true;
-            }
-            else
-            {
-                Console.WriteLine("You failed to run away!!");
-                if (goblinAttackNumber >= dodgeNumber)
-                {
-                    playerHP -= damageGoblin;
-                    Console.WriteLine($"{goblin} hit you for {damageGoblin} damage as you fled!");
-                }
-            }
-            break;
-        case "healing potion":
-            int healAmount = rng.Next(1, 7);
-            playerHP += healAmount;
-            Console.WriteLine($"You used a healing potion and recovered {healAmount} HP!");
-            Console.WriteLine($"You have {playerHP} HP remaining.");
-            if (goblinAttackNumber >= dodgeNumber)
-            {
-                Console.WriteLine($"{goblin} attacks you!");
-                playerHP -= damageGoblin;
-                Console.WriteLine($"You took {damageGoblin} damage!");
-            }
-            else
-            {
-                Console.WriteLine($"{goblin} missed the attack!");
-            }
-            break;
-        case "defend":
-            if (dodgeNumber * 2 >= goblinAttackNumber)
-            {
-                Console.WriteLine("You successfully defended against the attack!");
-            }
-            else
-            {
-                playerHP -= damageGoblin;
-                Console.WriteLine($"You took {damageGoblin} damage!");
-                Console.WriteLine($"You have {playerHP} HP remaining.");
-            }
-            break;
-        case "grapple":
-            if (attackNumber >= goblinDodgeNumber)
-            {
-                Console.WriteLine($"You successfully grappled the {goblin}!");
-                goblinHP -= damagePlayer * 2;
-                Console.WriteLine($"You dealt {damagePlayer * 2} damage to the {goblin}!");
-            }
-            else
-            {
-                Console.WriteLine($"{goblin} broke free from your grapple! Gaining a free attack!");
-                playerHP -= damageGoblin;
-                Console.WriteLine($"You took {damageGoblin} damage!");
-            }
-            break;
-        default:
-            Console.WriteLine("Invalid action. Please try again.");
-            break;
+        Console.WriteLine($"\n╔═══ YOU HAVE FALLEN ═══╗");
+        Console.WriteLine($"  Groups defeated: {groupsDefeated}  Level: {player.Level}");
+        break;
+    }
+
+    groupsDefeated++;
+    Console.WriteLine($"\n✓ Group {groupsDefeated} cleared!  HP: {player.HP}/{player.MaxHP}  XP: {player.XP}  Level: {player.Level}");
+    while (player.PendingFeats > 0) SelectFeats(player);
+
+    Console.WriteLine("\n[1] Move forward  [2] Rest and recover HP  [3] Go home");
+    Console.Write("Choice: ");
+    string next = (Console.ReadLine() ?? "1").Trim().ToLower();
+
+    if (next is "3" or "home" or "quit" or "q" or "go home")
+    {
+        Console.WriteLine($"\nYou return home! Groups defeated: {groupsDefeated}  Level: {player.Level}. Well done!");
+        break;
+    }
+    if (next is "2" or "rest" or "heal")
+    {
+        int dice = 1 + player.GetFeatStacks("Potion Brewer");
+        int recovered = 0;
+        for (int d = 0; d < dice; d++) recovered += rng.Next(1, 7 + player.HealBonus);
+        recovered = Math.Min(recovered, player.MaxHP - player.HP);
+        player.HP += recovered;
+        Console.WriteLine($"You rest and recover {recovered} HP. ({player.HP}/{player.MaxHP})");
     }
 }
 
-if (escaped)
+Console.WriteLine("\nThanks for playing!");
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+List<Enemy> BuildGroup(int waveNum, Random r)
 {
-    Console.WriteLine("You escaped from the goblin!");
+    var g = new List<Enemy>();
+    if (waveNum <= 10)
+        for (int i = 0; i < waveNum; i++) g.Add(new Goblin(r, $"Goblin {i + 1}"));
+    else
+    {
+        int hobs = Math.Min(waveNum - 10, 10);
+        int gobs = Math.Max(0, 21 - waveNum);
+        for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
+        for (int i = 0; i < gobs; i++) g.Add(new Goblin(r, $"Goblin {i + 1}"));
+    }
+    return g;
 }
-else if (playerHP <= 0)
+
+string DescribeGroup(List<Enemy> g) =>
+    string.Join(", ", g.GroupBy(e => e.TypeName).Select(gr => $"{gr.Count()}x {gr.Key}"));
+
+int XpThreshold(int level) => level <= 1 ? 0 : 5 * (level - 1) * (level + 4);
+
+void GainXP(int xp)
 {
-    Console.WriteLine("You have been defeated by the goblin...");
+    player.XP += xp;
+    Console.WriteLine($"  +{xp} XP! (Total: {player.XP}, Level: {player.Level})");
+    while (player.XP >= XpThreshold(player.Level + 1))
+    {
+        player.Level++;
+        Console.WriteLine($"\n★★★ LEVEL UP! You are now Level {player.Level}! ★★★");
+
+        if (player.Level >= 2 && player.Level % 2 == 0)
+        {
+            Console.Write($"  Choose +1 [A]ttack Max or +1 [D]amage Max: ");
+            string pick = (Console.ReadLine() ?? "a").Trim().ToLower();
+            if (pick.StartsWith("d")) { player.MaxDamage++; Console.WriteLine($"  Max Damage → {player.MaxDamage}"); }
+            else { player.MaxAttack++; Console.WriteLine($"  Max Attack → {player.MaxAttack}"); }
+            int hpB = (int)(player.MaxHP * 0.5);
+            player.MaxHP += hpB;
+            player.HP = Math.Min(player.HP + hpB, player.MaxHP);
+            Console.WriteLine($"  Max HP +{hpB} → {player.MaxHP}");
+        }
+
+        if (player.Level >= 3 && player.Level % 3 == 0)
+        {
+            player.MaxDodge++;
+            player.HealBonus++;
+            int hpB = (int)(player.MaxHP * 0.25);
+            player.MaxHP += hpB;
+            player.HP = Math.Min(player.HP + hpB, player.MaxHP);
+            Console.WriteLine($"  Dodge Max +1 → {player.MaxDodge}, Heal +1, HP +{hpB} → {player.MaxHP}");
+        }
+
+        if ((player.Level - 1) % 4 == 0)
+        {
+            player.PendingFeats++;
+            Console.WriteLine($"  Feat available!");
+        }
+    }
 }
-else if (goblinHP <= 0)
+
+void SelectFeats(Player p)
 {
-    Console.WriteLine($"Congratulations! You have defeated the {goblin}!");
+    while (p.PendingFeats > 0)
+    {
+        Console.WriteLine("\n═══ FEAT SELECTION ═══");
+        var avail = FeatDef.All.Where(f =>
+        {
+            if (f.Prerequisite != null && !p.HasFeat(f.Prerequisite)) return false;
+            if (!f.Stackable && p.HasFeat(f.Name)) return false;
+            if (f.MaxStacks > 0 && p.GetFeatStacks(f.Name) >= f.MaxStacks) return false;
+            return true;
+        }).ToList();
+
+        for (int i = 0; i < avail.Count; i++)
+        {
+            string pre = avail[i].Prerequisite != null ? $" (Req: {avail[i].Prerequisite})" : "";
+            string stk = avail[i].Stackable ? " [stackable]" : "";
+            Console.WriteLine($"  [{i + 1}] {avail[i].Name}{pre}{stk}");
+            Console.WriteLine($"       {avail[i].Desc}");
+        }
+
+        Console.Write($"Select feat (1-{avail.Count}): ");
+        if (int.TryParse(Console.ReadLine()?.Trim(), out int fi) && fi >= 1 && fi <= avail.Count)
+        {
+            var f = avail[fi - 1];
+            p.AddFeat(f.Name);
+            Console.WriteLine($"✓ Feat gained: {f.Name}");
+            p.PendingFeats--;
+            if (f.Name == "Toughness")
+            {
+                int extra = p.MaxHP;
+                p.MaxHP *= 2;
+                p.HP += extra;
+                Console.WriteLine($"  Max HP doubled to {p.MaxHP}!");
+            }
+        }
+        else Console.WriteLine("Invalid. Try again.");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLASSES
+// ═══════════════════════════════════════════════════════════════════════════
+
+class Player
+{
+    public string Name = "Goblin Slayer";
+    public int HP, MaxHP;
+    public int MinAttack = 1, MaxAttack = 6;
+    public int MinDamage = 1, MaxDamage = 9;
+    public int MinDodge = 1, MaxDodge = 6;
+    public int HealBonus = 0;
+    public int Level = 1, XP = 0, PendingFeats = 1;
+    public bool Defending = false;
+    public bool HasGoblinSword = false;
+    public int OffhandMaxDamage = 4;
+    public List<string> Feats = new();
+    public Dictionary<string, int> FeatStacks = new();
+
+    public Player(Random rng)
+    {
+        MaxHP = rng.Next(3, 13);
+        HP = MaxHP;
+    }
+
+    public bool HasFeat(string name) => Feats.Contains(name);
+    public int GetFeatStacks(string name) => FeatStacks.GetValueOrDefault(name, HasFeat(name) ? 1 : 0);
+
+    public void AddFeat(string name)
+    {
+        if (!Feats.Contains(name)) Feats.Add(name);
+        FeatStacks[name] = GetFeatStacks(name) + (FeatDef.All.First(f => f.Name == name).Stackable ? 1 : 0);
+        if (!FeatStacks.ContainsKey(name)) FeatStacks[name] = 1;
+    }
+
+    public void ClearRoundEffects() { Defending = false; }
+}
+
+abstract class Enemy
+{
+    public string Name;
+    public string TypeName;
+    public int HP, MaxHP;
+    public int MinAttack, MaxAttack;
+    public int MinDamage, MaxDamage;
+    public int MinDodge, MaxDodge;
+    public int XPValue;
+    public bool Alive = true;
+    public bool KnockedDown = false;
+    public bool KnockedOut = false;
+    public bool OffBalance = false;
+    public bool Disarmed = false;
+    public bool Grappled = false;
+    public bool CanMove = true;
+    public bool Charmed = false;
+    public bool HasFledBefore = false;
+    public int KOTurns = 0;
+    public int BleedDmg = 0;
+    public int DodgePenalty = 0;
+    public int AttackPenalty = 0;
+    public int WeaponDistance = 0;
+
+    public Enemy(string name, string typeName) { Name = name; TypeName = typeName; }
+
+    public string DisplayStatus()
+    {
+        var parts = new List<string> { $"{Name}: HP {HP}/{MaxHP}" };
+        if (KnockedOut) parts.Add($"KO({KOTurns}t)");
+        if (KnockedDown) parts.Add("Down");
+        if (OffBalance) parts.Add("Off-balance");
+        if (Disarmed) parts.Add($"Disarmed({WeaponDistance}ft)");
+        if (Grappled) parts.Add("Grappled");
+        if (BleedDmg > 0) parts.Add($"Bleed({BleedDmg})");
+        if (Charmed) parts.Add("Charmed");
+        return string.Join(" ", parts);
+    }
+
+    public string ShortStatus() => $"{Name} HP:{HP}/{MaxHP}";
+
+    public void EndOfRound()
+    {
+        OffBalance = false;
+        DodgePenalty = Math.Max(0, DodgePenalty - 2);
+        AttackPenalty = Math.Max(0, AttackPenalty - 2);
+        Charmed = false;
+    }
+}
+
+class Goblin : Enemy
+{
+    public Goblin(Random rng, string name) : base(name, "Goblin")
+    {
+        MaxHP = rng.Next(2, 9); HP = MaxHP;
+        MinAttack = 1; MaxAttack = 6;
+        MinDamage = 1; MaxDamage = 6;
+        MinDodge = 1; MaxDodge = 6;
+        XPValue = 10;
+    }
+}
+
+class Hobgoblin : Enemy
+{
+    public Hobgoblin(Random rng, string name) : base(name, "Hobgoblin")
+    {
+        MaxHP = 16; HP = MaxHP;
+        MinAttack = 1; MaxAttack = 8;
+        MinDamage = 1; MaxDamage = 8;
+        MinDodge = 2; MaxDodge = 8;
+        XPValue = 20;
+    }
+}
+
+class FeatDef
+{
+    public string Name, Desc;
+    public string? Prerequisite;
+    public bool Stackable;
+    public int MaxStacks;
+    public FeatDef(string n, string d, string? pre = null, bool stackable = false, int maxStacks = 0)
+    { Name = n; Desc = d; Prerequisite = pre; Stackable = stackable; MaxStacks = maxStacks; }
+
+    public static readonly List<FeatDef> All = new()
+    {
+        new("Block", "Roll 1-6 vs enemy attack. On success, enemy gets -2 dodge till their turn."),
+        new("Parry", "After a successful block, roll 1-6 vs dodge. Success knocks enemy down.", "Block"),
+        new("Counter Strike", "On successful dodge, block, or parry get a free attack on the attacker."),
+        new("Double Tap", "Each attack action also makes an off-hand attack (1d6 atk, 1d4 dmg)."),
+        new("Basic Combo", "Attacks include a kick (1d4 atk, 1d4 dmg).", "Double Tap"),
+        new("Fury of Blows", "Attacks add another kick and a headbutt (1d6 atk, 1d4 dmg).", "Basic Combo"),
+        new("Power Attack", "Per attack: -2 to attack roll, +4 damage."),
+        new("Sunder", "Per attack: -1 atk; on hit roll 1-6: 4-5 = bleed, 6 = double bleed."),
+        new("Disarm", "Per attack: target weapon instead of body; on hit, knock weapon 10 ft away."),
+        new("Thin the Herd", "Killing an enemy grants a free attack on another adjacent enemy."),
+        new("Slayer", "Enemy at low HP: get a free attack per turn against them.", "Thin the Herd"),
+        new("Sap", "Per attack: -2 atk; on hit, 1d4 dmg + chance die special effect."),
+        new("Opportunist", "Attack debuffed enemies (off-balance, down, KO, disarmed) at stacking -1 penalty.", "Counter Strike"),
+        new("Toughness", "Double max HP (up to 3 times).", null, true, 3),
+        new("Built", "+1 to minimum damage rolls.", null, true),
+        new("Talented", "+1 to minimum attack rolls.", null, true),
+        new("Potion Brewer", "Add another d6 to healing potion rolls.", null, true),
+        new("Closeliner", "+1 min grapple and +1 min grapple damage rolls.", null, true),
+        new("Judo", "On dodge/block/parry/enemy miss: free grapple. On success: hold, throw, or disarm."),
+        new("Kehon", "Enemy enters/leaves range, KO, disarmed, or off-balance: instant free grapple."),
+        new("Taekwondo", "Break limbs of grappled enemies (double damage; effects by limb)."),
+        new("Judo Black Belt", "Grapple 2 enemies from missed attacks; extras auto-knocked down.", "Judo"),
+        new("Kehon Black Belt", "Instantly KO grappled enemies (1 action); break free of grapple freely.", "Kehon"),
+        new("Taekwondo Black Belt", "Grapple 2 adjacent enemies simultaneously.", "Taekwondo"),
+        new("Chidia", "Unarmed: +2 actions per turn; all attacks are non-lethal (max KO 12-48 turns)."),
+        new("Chidia Black Belt", "Break weapons/hands with blocks/parries.", "Chidia"),
+        new("MMA", "Double min/max damage; +2 attacks and +2 grapples per action.", null),
+        new("Bard Song", "Roll 1d6 + stacks vs enemy 2d4; on success, enemies attack each other.", null, true),
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMBAT SESSION
+// ═══════════════════════════════════════════════════════════════════════════
+
+class CombatSession
+{
+    readonly Player P;
+    readonly Random Rng;
+    readonly Func<int, int> XpThreshold;
+    readonly Action<int> GainXP;
+    List<Enemy> Active;
+    List<(List<Enemy> batch, int turns)> Pending = new();
+
+    public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp)
+    {
+        P = p; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
+    }
+
+    public bool Run()
+    {
+        int turnNum = 0;
+        while (P.HP > 0)
+        {
+            var alive = Active.Where(e => e.Alive).ToList();
+            if (!alive.Any() && !Pending.Any()) break;
+
+            turnNum++;
+            Console.WriteLine($"\n━━━━ Turn {turnNum} ━━━━");
+
+            // Arrive reinforcements
+            var newPending = new List<(List<Enemy> batch, int turns)>();
+            foreach (var (batch, turns) in Pending)
+            {
+                if (turns <= 0)
+                {
+                    Console.WriteLine("\n! REINFORCEMENTS ARRIVE !");
+                    foreach (var e in batch) { e.Alive = true; e.HP = e.MaxHP; Active.Add(e); Console.WriteLine($"  {e.Name} charges in! (HP:{e.HP})"); }
+                }
+                else newPending.Add((batch, turns - 1));
+            }
+            Pending = newPending;
+
+            alive = Active.Where(e => e.Alive).ToList();
+
+            // Bleed
+            foreach (var e in alive.ToList())
+            {
+                if (e.BleedDmg > 0)
+                {
+                    e.HP -= e.BleedDmg;
+                    Console.WriteLine($"  {e.Name} bleeds for {e.BleedDmg}. HP: {e.HP}/{e.MaxHP}");
+                    if (!e.Alive) { Console.WriteLine($"  {e.Name} bleeds out!"); GainXP(e.XPValue); }
+                }
+            }
+
+            alive = Active.Where(e => e.Alive).ToList();
+            if (!alive.Any() && !Pending.Any()) break;
+
+            Console.WriteLine($"\nHP: {P.HP}/{P.MaxHP}  XP: {P.XP}  Level: {P.Level}");
+            for (int i = 0; i < alive.Count; i++) Console.WriteLine($"  [{i + 1}] {alive[i].DisplayStatus()}");
+
+            bool fled = PlayerTurn();
+            if (fled) { Console.WriteLine("You escaped!"); return true; }
+            if (P.HP <= 0) break;
+
+            alive = Active.Where(e => e.Alive).ToList();
+            if (!alive.Any() && !Pending.Any()) break;
+
+            EnemyTurn();
+            P.ClearRoundEffects();
+
+            foreach (var e in Active.Where(e => e.Alive)) e.EndOfRound();
+        }
+        return P.HP > 0;
+    }
+
+    // ── PLAYER TURN ──────────────────────────────────────────────────────
+
+    bool PlayerTurn()
+    {
+        int actLeft = 2;
+        if (P.HasFeat("Chidia")) actLeft += 2;
+
+        bool fled = false;
+        bool justBlocked = false;
+        Enemy? blockTarget = null;
+
+        while (actLeft > 0 && !fled && P.HP > 0)
+        {
+            var alive = Active.Where(e => e.Alive).ToList();
+            if (!alive.Any()) break;
+
+            Console.WriteLine($"\n  [Actions: {actLeft}]");
+            var opts = BuildOpts(justBlocked, alive);
+            for (int i = 0; i < opts.Count; i++) Console.Write($"[{i + 1}]{opts[i]}  ");
+            Console.WriteLine();
+            Console.Write("  Action: ");
+            string raw = (Console.ReadLine() ?? "").Trim().ToLower();
+
+            string chosen;
+            if (int.TryParse(raw, out int n) && n >= 1 && n <= opts.Count) chosen = opts[n - 1];
+            else chosen = opts.FirstOrDefault(o => o.StartsWith(raw)) ?? raw;
+
+            Enemy? target = null;
+            if (chosen is "attack" or "grapple" or "block" or "parry" or "sap" or "sunder" or "disarm")
+            {
+                target = PickTarget(alive);
+                if (target == null) continue;
+            }
+
+            switch (chosen)
+            {
+                case "attack":
+                    DoAttack(target!);
+                    justBlocked = false;
+                    break;
+
+                case "grapple":
+                    DoGrapple(target!);
+                    justBlocked = false;
+                    break;
+
+                case "defend":
+                    P.Defending = true;
+                    Console.WriteLine("  Defensive stance. Incoming damage halved this round.");
+                    justBlocked = false;
+                    break;
+
+                case "healing potion":
+                    DoHeal();
+                    justBlocked = false;
+                    break;
+
+                case "run":
+                {
+                    int dr = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+                    if (dr >= 4) { fled = true; }
+                    else
+                    {
+                        Console.WriteLine($"  Failed to escape (rolled {dr})!");
+                        var atk = alive[Rng.Next(alive.Count)];
+                        EnemyAttack(atk);
+                    }
+                    justBlocked = false;
+                    break;
+                }
+
+                case "block":
+                {
+                    if (target == null) break;
+                    int bRoll = Rng.Next(1, 7);
+                    int eAtk = Rng.Next(target.MinAttack, target.MaxAttack + 1);
+                    Console.WriteLine($"  Block! Roll {bRoll} vs {target.Name}'s attack {eAtk}.");
+                    if (bRoll >= eAtk)
+                    {
+                        Console.WriteLine($"  Blocked! {target.Name} is off-balance (-2 dodge).");
+                        target.DodgePenalty += 2; target.OffBalance = true;
+                        justBlocked = true; blockTarget = target;
+                        FreeAttackPrompt("Counter Strike", target);
+                        if (P.HasFeat("Judo")) JudoPrompt(target);
+                        if (P.HasFeat("Chidia Black Belt") && bRoll == 6)
+                            Console.WriteLine($"  Chidia Black Belt! {target.Name}'s weapon arm is damaged!");
+                    }
+                    else
+                    {
+                        int dmg = Math.Max(1, Rng.Next(target.MinDamage, target.MaxDamage + 1) / 2);
+                        Console.WriteLine($"  Block failed! You take {dmg} damage. HP: {P.HP - dmg}/{P.MaxHP}");
+                        P.HP -= dmg;
+                        justBlocked = false;
+                    }
+                    break;
+                }
+
+                case "parry":
+                {
+                    if (blockTarget == null || !blockTarget.Alive) { Console.WriteLine("  No blocked target for parry."); continue; }
+                    int pRoll = Rng.Next(1, 7);
+                    int pDdg = Rng.Next(blockTarget.MinDodge, blockTarget.MaxDodge + 1);
+                    Console.WriteLine($"  Parry! Roll {pRoll} vs {blockTarget.Name}'s dodge {pDdg}.");
+                    if (pRoll >= pDdg)
+                    {
+                        Console.WriteLine($"  Parry! {blockTarget.Name} is knocked off their feet!");
+                        blockTarget.KnockedDown = true; blockTarget.OffBalance = true;
+                        FreeAttackPrompt("Counter Strike", blockTarget);
+                        if (P.HasFeat("Judo")) JudoPrompt(blockTarget);
+                    }
+                    else Console.WriteLine("  Parry failed!");
+                    justBlocked = false;
+                    break;
+                }
+
+                case "bard song":
+                {
+                    int stacks = Math.Max(1, P.GetFeatStacks("Bard Song"));
+                    int songRoll = Rng.Next(1, 7) + stacks;
+                    Console.WriteLine($"  Bard Song! Roll {songRoll}.");
+                    foreach (var e in alive)
+                    {
+                        int res = Rng.Next(2, 9);
+                        if (songRoll > res) { e.Charmed = true; Console.WriteLine($"  {e.Name} charmed!"); }
+                        else Console.WriteLine($"  {e.Name} resists (rolled {res}).");
+                    }
+                    justBlocked = false;
+                    break;
+                }
+
+                case "pick up goblin sword":
+                    P.HasGoblinSword = true;
+                    P.OffhandMaxDamage += 2;
+                    Console.WriteLine($"  You grab a goblin sword! Off-hand max damage → {P.OffhandMaxDamage}.");
+                    break;
+
+                default:
+                    Console.WriteLine($"  Unknown action '{chosen}'. Try again.");
+                    continue;
+            }
+
+            actLeft--;
+        }
+
+        // End of player turn: Opportunist checks
+        if (P.HasFeat("Opportunist"))
+        {
+            var debuffed = Active.Where(e => e.Alive && (e.OffBalance || e.KnockedDown || e.KnockedOut || e.Disarmed)).ToList();
+            if (debuffed.Any()) OpportunistAttacks(debuffed);
+        }
+
+        return fled;
+    }
+
+    List<string> BuildOpts(bool justBlocked, List<Enemy> alive)
+    {
+        var o = new List<string> { "attack", "grapple", "defend", "healing potion", "run" };
+        if (P.HasFeat("Block")) o.Add("block");
+        if (P.HasFeat("Parry") && justBlocked) o.Add("parry");
+        if (P.HasFeat("Bard Song")) o.Add("bard song");
+        bool deadGoblin = Active.Any(e => !e.Alive && e is Goblin);
+        if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
+        return o;
+    }
+
+    Enemy? PickTarget(List<Enemy> alive)
+    {
+        if (alive.Count == 1) return alive[0];
+        for (int i = 0; i < alive.Count; i++) Console.Write($"[{i + 1}]{alive[i].Name}  ");
+        Console.WriteLine();
+        Console.Write("  Target #: ");
+        if (int.TryParse(Console.ReadLine()?.Trim(), out int ti) && ti >= 1 && ti <= alive.Count)
+            return alive[ti - 1];
+        Console.WriteLine("  Invalid target.");
+        return null;
+    }
+
+    // ── ATTACK ────────────────────────────────────────────────────────────
+
+    void DoAttack(Enemy target)
+    {
+        // Modifiers
+        bool usePower = false, useSunder = false, useDisarm = false, useSap = false;
+        var mods = new List<string>();
+        if (P.HasFeat("Power Attack")) mods.Add("[P]ower(-2atk/+4dmg)");
+        if (P.HasFeat("Sunder")) mods.Add("[S]under(-1atk/bleed)");
+        if (P.HasFeat("Disarm")) mods.Add("[D]isarm");
+        if (P.HasFeat("Sap")) mods.Add("[A]p(-2atk/effects)");
+        if (mods.Any())
+        {
+            Console.Write($"  Modifier? {string.Join("  ", mods)}  [N]one: ");
+            string m = (Console.ReadLine() ?? "n").Trim().ToLower();
+            usePower = m.StartsWith("p") && P.HasFeat("Power Attack");
+            useSunder = m.StartsWith("s") && P.HasFeat("Sunder");
+            useDisarm = m.StartsWith("d") && P.HasFeat("Disarm");
+            useSap = (m.StartsWith("a")) && P.HasFeat("Sap");
+        }
+
+        int atkPen = 0, dmgBonus = 0;
+        if (usePower) { atkPen -= 2; dmgBonus += 4; }
+        if (useSunder) atkPen--;
+        if (useSap) atkPen -= 2;
+
+        int minAtk = P.MinAttack + (P.HasFeat("Talented") ? P.GetFeatStacks("Talented") : 0);
+        int maxAtk = P.MaxAttack;
+        int minDmg = P.MinDamage + (P.HasFeat("Built") ? P.GetFeatStacks("Built") : 0);
+        int maxDmg = P.MaxDamage;
+        if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
+
+        PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
+
+        // Off-hand (Double Tap)
+        if (P.HasFeat("Double Tap") && target.Alive)
+        {
+            int ofAtk = Rng.Next(1, 7);
+            int ofDdg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+            Console.WriteLine($"  Off-hand: roll {ofAtk} vs dodge {ofDdg}.");
+            if (ofAtk >= ofDdg)
+            {
+                int ofDmg = Rng.Next(1, P.OffhandMaxDamage + 1);
+                Console.WriteLine($"  Off-hand HIT! {ofDmg} dmg → {target.Name} HP:{target.HP - ofDmg}/{target.MaxHP}");
+                target.HP -= ofDmg;
+                if (!target.Alive) HandleKill(target);
+            }
+            else Console.WriteLine("  Off-hand MISS!");
+        }
+
+        // Kick (Basic Combo)
+        if (P.HasFeat("Basic Combo") && target.Alive) DoKick(target);
+
+        // Fury of Blows: extra kick + headbutt
+        if (P.HasFeat("Fury of Blows") && target.Alive)
+        {
+            DoKick(target);
+            if (target.Alive)
+            {
+                int hbA = Rng.Next(1, 7), hbD = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+                Console.WriteLine($"  Headbutt: {hbA} vs {hbD}.");
+                if (hbA >= hbD) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Headbutt HIT! {d} dmg."); if (!target.Alive) HandleKill(target); }
+                else Console.WriteLine("  Headbutt MISS!");
+            }
+        }
+
+        // MMA: 2 extra main attacks
+        if (P.HasFeat("MMA"))
+            for (int i = 0; i < 2 && target.Alive; i++)
+            {
+                Console.WriteLine($"  MMA bonus attack {i + 1}:");
+                PerformAttack(target, Rng.Next(minAtk, maxAtk + 1), minDmg, maxDmg, 0, false, false, false);
+            }
+    }
+
+    void PerformAttack(Enemy target, int atkRoll, int minDmg, int maxDmg, int dmgBonus, bool sunder, bool disarm, bool sap)
+    {
+        int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        Console.WriteLine($"  Attack: {atkRoll} vs {target.Name}'s dodge {ddg}.");
+
+        if (atkRoll < ddg)
+        {
+            Console.WriteLine("  MISS!");
+            if (P.HasFeat("Judo")) JudoPrompt(target);
+            return;
+        }
+
+        if (disarm)
+        {
+            Console.WriteLine($"  Disarm HIT! {target.Name}'s weapon flies 10 ft away!");
+            target.Disarmed = true; target.WeaponDistance = 10;
+            if (P.HasFeat("Opportunist")) OpportunistPromptNote();
+            return;
+        }
+
+        if (sap)
+        {
+            int sd = Rng.Next(1, 5);
+            int cd = Rng.Next(1, 7);
+            Console.WriteLine($"  Sap HIT! {sd} dmg, chance die: {cd}");
+            target.HP -= sd;
+            switch (cd)
+            {
+                case 1: Console.WriteLine("  Enemy shrugs off the worst (-2 dmg taken)."); break;
+                case 3: case 4:
+                    target.OffBalance = true; target.DodgePenalty += 2; target.AttackPenalty += 2;
+                    Console.WriteLine($"  {target.Name} off-balance (-2 dodge/-2 atk)!"); break;
+                case 5:
+                    target.KnockedOut = true; target.KOTurns = Rng.Next(1, 7);
+                    Console.WriteLine($"  {target.Name} KNOCKED OUT for {target.KOTurns} turns!"); break;
+                case 6:
+                    target.KnockedOut = true; target.KOTurns = Rng.Next(1, 7); target.BleedDmg++;
+                    Console.WriteLine($"  {target.Name} KNOCKED OUT and BLEEDING!"); break;
+            }
+            if (!target.Alive) HandleKill(target);
+            return;
+        }
+
+        int dmg = Rng.Next(minDmg, maxDmg + 1) + dmgBonus;
+        Console.WriteLine($"  HIT! {dmg} dmg → {target.Name} HP:{target.HP - dmg}/{target.MaxHP}");
+        target.HP -= dmg;
+
+        if (sunder && target.Alive)
+        {
+            int sd = Rng.Next(1, 7);
+            if (sd >= 6) { target.BleedDmg += 2; Console.WriteLine($"  DOUBLE BLEED! ({target.BleedDmg}/turn)"); }
+            else if (sd >= 4) { target.BleedDmg++; Console.WriteLine($"  BLEED! ({target.BleedDmg}/turn)"); }
+            else Console.WriteLine("  No bleed.");
+        }
+
+        if (!target.Alive) { HandleKill(target); return; }
+
+        // Slayer
+        if (P.HasFeat("Slayer") && target.HP <= target.MaxHP / 3)
+        {
+            Console.Write($"  Slayer! {target.Name} is low HP. Free attack? (y/n): ");
+            if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") FreeAttack(target);
+        }
+    }
+
+    void DoKick(Enemy target)
+    {
+        int kA = Rng.Next(1, 5), kD = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        Console.WriteLine($"  Kick: {kA} vs {kD}.");
+        if (kA >= kD) { int d = Rng.Next(1, 5); target.HP -= d; Console.WriteLine($"  Kick HIT! {d} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}"); if (!target.Alive) HandleKill(target); }
+        else Console.WriteLine("  Kick MISS!");
+    }
+
+    void FreeAttack(Enemy target)
+    {
+        if (!target.Alive) return;
+        int a = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+        int d = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        Console.WriteLine($"  [Free attack] {a} vs {d}.");
+        if (a >= d)
+        {
+            int dmg = Rng.Next(P.MinDamage, P.MaxDamage + 1) + (P.HasFeat("Built") ? P.GetFeatStacks("Built") : 0);
+            target.HP -= dmg;
+            Console.WriteLine($"  HIT! {dmg} dmg → {target.Name} HP:{target.HP}/{target.MaxHP}");
+            if (!target.Alive) HandleKill(target);
+        }
+        else Console.WriteLine("  Miss!");
+    }
+
+    void FreeAttackPrompt(string feat, Enemy target)
+    {
+        if (!P.HasFeat(feat) || !target.Alive) return;
+        Console.Write($"  {feat}! Free attack on {target.Name}? (y/n): ");
+        if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") FreeAttack(target);
+    }
+
+    void HandleKill(Enemy e)
+    {
+        Console.WriteLine($"  {e.Name} is defeated!");
+        GainXP(e.XPValue);
+        var others = Active.Where(x => x.Alive && x != e).ToList();
+        if (P.HasFeat("Thin the Herd") && others.Any())
+        {
+            Console.Write($"  Thin the Herd! Free attack on another enemy? (y/n): ");
+            if ((Console.ReadLine() ?? "").Trim().ToLower() == "y")
+            {
+                var t = others.Count == 1 ? others[0] : PickTarget(others);
+                if (t != null) FreeAttack(t);
+            }
+        }
+    }
+
+    void OpportunistPromptNote() => Console.WriteLine("  (Opportunist: attack them at end of turn!)");
+
+    void OpportunistAttacks(List<Enemy> debuffed)
+    {
+        Console.WriteLine("\n  [Opportunist] Attack debuffed enemies?");
+        for (int i = 0; i < debuffed.Count; i++) Console.WriteLine($"    [{i + 1}] {debuffed[i].ShortStatus()}");
+        Console.WriteLine("    [0] Skip");
+
+        int pen = -1;
+        while (debuffed.Any(e => e.Alive))
+        {
+            Console.Write($"  Target (penalty {pen}, 0=stop): ");
+            if (!int.TryParse(Console.ReadLine()?.Trim(), out int idx) || idx == 0) break;
+            if (idx < 1 || idx > debuffed.Count || !debuffed[idx - 1].Alive) { Console.WriteLine("  Invalid."); continue; }
+
+            var t = debuffed[idx - 1];
+            int a = Rng.Next(P.MinAttack, P.MaxAttack + 1) + pen;
+            int d = Rng.Next(t.MinDodge, t.MaxDodge + 1) - 4 - t.DodgePenalty;
+            Console.WriteLine($"  Opportunist: {a} vs {t.Name}'s dodge {d}.");
+            if (a >= d)
+            {
+                int dmg = Rng.Next(P.MinDamage, P.MaxDamage + 1) + (d <= 0 ? 1 : 0);
+                t.HP -= dmg;
+                Console.WriteLine($"  HIT! {dmg} dmg → {t.Name} HP:{t.HP}/{t.MaxHP}");
+                if (!t.Alive) HandleKill(t);
+            }
+            else Console.WriteLine("  Miss!");
+            pen--;
+        }
+    }
+
+    // ── GRAPPLE ───────────────────────────────────────────────────────────
+
+    void DoGrapple(Enemy target)
+    {
+        int minG = 1 + P.GetFeatStacks("Closeliner");
+        int gRoll = Rng.Next(minG, 7);
+        int dRoll = Rng.Next(target.MinDodge, target.MaxDodge + 1);
+        Console.WriteLine($"  Grapple! Roll {gRoll} vs {target.Name}'s dodge {dRoll}.");
+        if (gRoll < dRoll) { Console.WriteLine("  Grapple FAILED!"); return; }
+
+        target.Grappled = true;
+        Console.WriteLine($"  Grapple SUCCESS! {target.Name} is grappled.");
+
+        string gOpts = P.HasFeat("Judo") ? "[H]old  [T]hrow  [D]isarm" : "[H]old  [T]hrow";
+        Console.Write($"  Option: {gOpts}: ");
+        string go = (Console.ReadLine() ?? "h").Trim().ToLower();
+
+        if (go.StartsWith("t"))
+        {
+            target.Grappled = false; target.KnockedDown = true;
+            Console.WriteLine($"  {target.Name} thrown to the ground!");
+        }
+        else if (go.StartsWith("d") && P.HasFeat("Judo"))
+        {
+            target.Grappled = false; target.Disarmed = true; target.WeaponDistance = 10;
+            Console.WriteLine($"  {target.Name}'s weapon wrenched away!");
+        }
+        else
+        {
+            int minGD = 1 + P.GetFeatStacks("Closeliner");
+            int gDmg = Rng.Next(minGD, 7);
+            target.HP -= gDmg;
+            Console.WriteLine($"  Grapple damage: {gDmg} → {target.Name} HP:{target.HP}/{target.MaxHP}");
+            if (!target.Alive) { HandleKill(target); return; }
+
+            // Taekwondo limb break
+            if (P.HasFeat("Taekwondo"))
+            {
+                Console.Write("  Taekwondo limb break? [L]eg [A]rm [N]eck [B]ack [S]kip: ");
+                string lb = (Console.ReadLine() ?? "s").Trim().ToLower();
+                int bd = Rng.Next(P.MinDamage, P.MaxDamage + 1) * 2;
+                switch (lb.Length > 0 ? lb[0] : 's')
+                {
+                    case 'l': target.HP -= bd; target.CanMove = false; Console.WriteLine($"  Leg broken! {bd} dmg. Can't walk."); break;
+                    case 'a': target.HP -= bd; target.Disarmed = true; Console.WriteLine($"  Arm broken! {bd} dmg. Can't hold weapon."); break;
+                    case 'n': target.HP = 0; Console.WriteLine("  Neck snapped! Instant kill!"); break;
+                    case 'b': target.HP -= bd; target.CanMove = false; target.KnockedDown = true; Console.WriteLine($"  Back broken! {bd} dmg. Can't move."); break;
+                }
+                if (!target.Alive) HandleKill(target);
+            }
+
+            // Kehon Black Belt: instant KO
+            if (P.HasFeat("Kehon Black Belt") && target.Alive)
+            {
+                Console.Write($"  Kehon Black Belt! Instant KO {target.Name}? (y/n): ");
+                if ((Console.ReadLine() ?? "").Trim().ToLower() == "y")
+                {
+                    target.KnockedOut = true; target.KOTurns = Rng.Next(3, 9);
+                    target.Grappled = false;
+                    Console.WriteLine($"  {target.Name} knocked out for {target.KOTurns} turns!");
+                }
+            }
+        }
+    }
+
+    void JudoPrompt(Enemy target)
+    {
+        if (!target.Alive) return;
+        Console.Write($"  Judo! Free grapple on {target.Name}? (y/n): ");
+        if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") DoGrapple(target);
+    }
+
+    void DoHeal()
+    {
+        int dice = 1 + P.GetFeatStacks("Potion Brewer");
+        int h = 0;
+        for (int d = 0; d < dice; d++) h += Rng.Next(1, 7 + P.HealBonus);
+        h = Math.Min(h, P.MaxHP - P.HP);
+        P.HP += h;
+        Console.WriteLine($"  Healing potion! +{h} HP. ({P.HP}/{P.MaxHP})");
+    }
+
+    // ── ENEMY TURN ────────────────────────────────────────────────────────
+
+    void EnemyTurn()
+    {
+        Console.WriteLine("\n  --- Enemy Turn ---");
+        foreach (var e in Active.Where(e => e.Alive).ToList())
+        {
+            if (!e.Alive) continue;
+
+            // Charmed: attack another enemy
+            if (e.Charmed)
+            {
+                var others = Active.Where(x => x.Alive && x != e).ToList();
+                if (others.Any())
+                {
+                    var victim = others[Rng.Next(others.Count)];
+                    int dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
+                    victim.HP -= dmg;
+                    Console.WriteLine($"  {e.Name} (charmed) attacks {victim.Name} for {dmg}! HP:{victim.HP}/{victim.MaxHP}");
+                    if (!victim.Alive) { Console.WriteLine($"  {victim.Name} falls to {e.Name}!"); GainXP(victim.XPValue); }
+                }
+                continue;
+            }
+
+            // Stand up if knocked down
+            int actions = 2;
+            if (e.KnockedDown)
+            {
+                Console.WriteLine($"  {e.Name} stands up (1 action used).");
+                e.KnockedDown = false;
+                actions--;
+                if (actions <= 0) continue;
+            }
+
+            // KO
+            if (e.KnockedOut)
+            {
+                e.KOTurns--;
+                Console.WriteLine($"  {e.Name} is knocked out ({Math.Max(0, e.KOTurns)} turns left).");
+                if (e.KOTurns <= 0) { e.KnockedOut = false; Console.WriteLine($"  {e.Name} wakes up!"); }
+                continue;
+            }
+
+            // Retrieve weapon if disarmed
+            if (e.Disarmed && e.WeaponDistance > 0 && e.CanMove)
+            {
+                if (actions >= 2)
+                {
+                    Console.WriteLine($"  {e.Name} retrieves their weapon.");
+                    e.Disarmed = false; e.WeaponDistance = 0; actions -= 2;
+                }
+                else { Console.WriteLine($"  {e.Name} moves toward their weapon."); actions = 0; }
+                if (actions <= 0) continue;
+            }
+
+            // Low health: maybe flee
+            bool lowHP = e.HP <= e.MaxHP / 3;
+            if (lowHP && !e.HasFledBefore && e is Goblin)
+            {
+                int fleeRoll = Rng.Next(1, 7);
+                if (fleeRoll >= 4)
+                {
+                    Console.WriteLine($"  {e.Name} turns and flees! (returns in 2 turns with reinforcements!)");
+                    e.HasFledBefore = true;
+                    e.Alive = false;
+                    var returnedGoblin = new Goblin(Rng, e.Name);
+                    var reinforcements = new List<Enemy>
+                    {
+                        returnedGoblin,
+                        new Goblin(Rng, "Goblin Reinforcement A"),
+                        new Goblin(Rng, "Goblin Reinforcement B")
+                    };
+                    Pending.Add((reinforcements, 2));
+                    continue;
+                }
+            }
+
+            // Hobgoblin may grapple
+            if (e is Hobgoblin && actions >= 1 && Rng.Next(2) == 0)
+            {
+                int gAtk = Rng.Next(2, 9) - e.AttackPenalty;
+                int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+                Console.WriteLine($"  {e.Name} attempts to grapple! {gAtk} vs player dodge {pDdg}.");
+                if (gAtk >= pDdg)
+                {
+                    int gDmg = Rng.Next(1, 5);
+                    P.HP -= gDmg;
+                    Console.WriteLine($"  Grapple! You take {gDmg} crush damage. HP:{P.HP}/{P.MaxHP}");
+                }
+                else Console.WriteLine($"  Grapple attempt failed!");
+                actions--;
+            }
+
+            // Normal attacks
+            for (int i = 0; i < actions && P.HP > 0; i++)
+                EnemyAttack(e);
+        }
+    }
+
+    void EnemyAttack(Enemy e)
+    {
+        if (!e.Alive || e.KnockedOut) return;
+        int eAtk = Rng.Next(e.MinAttack, e.MaxAttack + 1) - e.AttackPenalty;
+        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+        Console.WriteLine($"  {e.Name} attacks! Roll {eAtk} vs your dodge {pDdg}.");
+        if (eAtk >= pDdg)
+        {
+            int dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
+            if (e.Disarmed) dmg = Math.Max(1, dmg / 2);
+            if (P.Defending) dmg = Math.Max(1, dmg / 2);
+            Console.WriteLine($"  HIT! You take {dmg} damage. HP: {P.HP - dmg}/{P.MaxHP}");
+            P.HP -= dmg;
+        }
+        else
+        {
+            Console.WriteLine("  MISS!");
+            FreeAttackPrompt("Counter Strike", e);
+            if (P.HasFeat("Judo")) JudoPrompt(e);
+            if (P.HasFeat("Kehon"))
+            {
+                Console.Write($"  Kehon! Instant grapple on {e.Name}? (y/n): ");
+                if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") DoGrapple(e);
+            }
+        }
+    }
 }
