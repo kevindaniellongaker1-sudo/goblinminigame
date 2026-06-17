@@ -1690,7 +1690,7 @@ class CombatSession
                     cur.HP -= dmg; cur.HitBySpell = true; hit.Add(cur);
                     Console.WriteLine($"    {cur.Name} struck for {dmg} lightning! HP:{cur.HP}/{cur.MaxHP}");
                     if (!cur.Alive) HandleKill(cur);
-                    // Find next unhit enemy within 2 squares (never arcs back to player)
+                    // Find next unhit enemy within 2 squares (caster exempt; friendly fire applies to all others)
                     cur = alive.Where(e => !hit.Contains(e) && e.Alive && e.Position.ManhattanDist(cur.Position) <= 2)
                                .OrderBy(e => e.Position.ManhattanDist(cur.Position))
                                .FirstOrDefault();
