@@ -78,7 +78,19 @@ List<Enemy> BuildGroup(int waveNum, Random r)
 string DescribeGroup(List<Enemy> g) =>
     string.Join(", ", g.GroupBy(e => e.TypeName).Select(gr => $"{gr.Count()}x {gr.Key}"));
 
-int XpThreshold(int level) => level <= 1 ? 0 : 5 * (level - 1) * (level + 4);
+int XpThreshold(int level)
+{
+    if (level <= 1) return 0;
+    int total = 0, gap = 30;
+    for (int i = 1; i < level; i++)
+    {
+        total += gap;
+        // Normal increment = 10. After lvl 10 → ×2 (20), after 20 → ×2.5 (25), after 30 → ×3 (30)
+        int inc = i < 10 ? 10 : i < 20 ? 20 : i < 30 ? 25 : 30;
+        gap += inc;
+    }
+    return total;
+}
 
 void GainXP(int xp)
 {
@@ -215,6 +227,9 @@ abstract class Enemy
     public bool CanMove = true;
     public bool Charmed = false;
     public bool HasFledBefore = false;
+    public int ConsecutiveDmgTurns = 0;
+    public int HpAtTurnStart = 0;
+    public bool GrappleNextTurn = false;
     public int KOTurns = 0;
     public int BleedDmg = 0;
     public int DodgePenalty = 0;
@@ -374,6 +389,9 @@ class CombatSession
             Console.WriteLine($"\nHP: {P.HP}/{P.MaxHP}  XP: {P.XP}  Level: {P.Level}");
             for (int i = 0; i < alive.Count; i++) Console.WriteLine($"  [{i + 1}] {alive[i].DisplayStatus()}");
 
+            // Snapshot HP so consecutive-damage tracking works after player acts
+            foreach (var e in Active.Where(x => x.Alive)) e.HpAtTurnStart = e.HP;
+
             bool fled = PlayerTurn();
             if (fled) { Console.WriteLine("You escaped!"); return true; }
             if (P.HP <= 0) break;
@@ -448,14 +466,25 @@ class CombatSession
 
                 case "run":
                 {
-                    int dr = Rng.Next(P.MinDodge, P.MaxDodge + 1);
-                    if (dr >= 4) { fled = true; }
-                    else
+                    Console.WriteLine("  You try to escape!");
+                    bool blocked = false;
+                    foreach (var e in alive)
                     {
-                        Console.WriteLine($"  Failed to escape (rolled {dr})!");
-                        var atk = alive[Rng.Next(alive.Count)];
-                        EnemyAttack(atk);
+                        if (blocked) break;
+                        int eAtk = Rng.Next(e.MinAttack, e.MaxAttack + 1) - e.AttackPenalty;
+                        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1) - 2;
+                        Console.WriteLine($"  {e.Name} reacts! Roll {eAtk} vs your dodge-2 ({pDdg}).");
+                        if (eAtk >= pDdg)
+                        {
+                            int dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
+                            if (P.Defending) dmg = Math.Max(1, dmg / 2);
+                            Console.WriteLine($"  {e.Name} hits you for {dmg}! You fail to escape. HP:{P.HP - dmg}/{P.MaxHP}");
+                            P.HP -= dmg;
+                            blocked = true;
+                        }
+                        else Console.WriteLine($"  {e.Name} misses — you slip past!");
                     }
+                    if (!blocked) fled = true;
                     justBlocked = false;
                     break;
                 }
@@ -890,8 +919,16 @@ class CombatSession
                 continue;
             }
 
+            // Hobgoblins: update consecutive-damage counter before acting
+            if (e is Hobgoblin)
+            {
+                if (e.HP < e.HpAtTurnStart) e.ConsecutiveDmgTurns++;
+                else e.ConsecutiveDmgTurns = 0;
+                if (e.ConsecutiveDmgTurns >= 3) { e.GrappleNextTurn = true; e.ConsecutiveDmgTurns = 0; }
+            }
+
             // Stand up if knocked down
-            int actions = 2;
+            int actions = e is Hobgoblin ? 3 : 2;
             if (e.KnockedDown)
             {
                 Console.WriteLine($"  {e.Name} stands up (1 action used).");
@@ -921,47 +958,127 @@ class CombatSession
                 if (actions <= 0) continue;
             }
 
-            // Low health: maybe flee
-            bool lowHP = e.HP <= e.MaxHP / 3;
-            if (lowHP && !e.HasFledBefore && e is Goblin)
+            // ── Goblin flee (HP <= MaxHP/3) ────────────────────────────────
+            if (!e.HasFledBefore && e is Goblin && e.HP <= e.MaxHP / 3)
             {
                 int fleeRoll = Rng.Next(1, 7);
                 if (fleeRoll >= 4)
                 {
-                    Console.WriteLine($"  {e.Name} turns and flees! (returns in 2 turns with reinforcements!)");
-                    e.HasFledBefore = true;
-                    e.Alive = false;
-                    var returnedGoblin = new Goblin(Rng, e.Name);
-                    var reinforcements = new List<Enemy>
+                    Console.WriteLine($"  {e.Name} tries to flee!");
+                    bool stopped = PlayerFreeActionOnFleeingEnemy(e);
+                    if (!stopped)
                     {
-                        returnedGoblin,
-                        new Goblin(Rng, "Goblin Reinforcement A"),
-                        new Goblin(Rng, "Goblin Reinforcement B")
-                    };
-                    Pending.Add((reinforcements, 2));
+                        e.HasFledBefore = true;
+                        e.Alive = false;
+                        var returnedGoblin = new Goblin(Rng, e.Name);
+                        Pending.Add((new List<Enemy>
+                        {
+                            returnedGoblin,
+                            new Goblin(Rng, "Goblin Reinforcement A"),
+                            new Goblin(Rng, "Goblin Reinforcement B")
+                        }, 2));
+                    }
                     continue;
                 }
             }
 
-            // Hobgoblin may grapple
-            if (e is Hobgoblin && actions >= 1 && Rng.Next(2) == 0)
+            // ── Hobgoblin AI ───────────────────────────────────────────────
+            if (e is Hobgoblin)
             {
-                int gAtk = Rng.Next(2, 9) - e.AttackPenalty;
-                int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
-                Console.WriteLine($"  {e.Name} attempts to grapple! {gAtk} vs player dodge {pDdg}.");
-                if (gAtk >= pDdg)
+                // HP <= 5: try to flee
+                if (e.HP <= 5 && !e.HasFledBefore)
                 {
-                    int gDmg = Rng.Next(1, 5);
-                    P.HP -= gDmg;
-                    Console.WriteLine($"  Grapple! You take {gDmg} crush damage. HP:{P.HP}/{P.MaxHP}");
+                    Console.WriteLine($"  {e.Name} is badly wounded and tries to flee!");
+                    bool stopped = PlayerFreeActionOnFleeingEnemy(e);
+                    if (!stopped)
+                    {
+                        e.HasFledBefore = true;
+                        e.Alive = false;
+                        int healAmount = Rng.Next(1, 5);
+                        var returnedHob = new Hobgoblin(Rng, e.Name);
+                        returnedHob.HP = Math.Min(returnedHob.MaxHP, healAmount);
+                        Pending.Add((new List<Enemy>
+                        {
+                            returnedHob,
+                            new Hobgoblin(Rng, "Hobgoblin Reinforcement")
+                        }, 2));
+                        Console.WriteLine($"  {e.Name} escapes! Will return healed with a friend.");
+                    }
+                    continue;
                 }
-                else Console.WriteLine($"  Grapple attempt failed!");
-                actions--;
+
+                // Grapple if triggered by 3 consecutive turns of taking damage
+                if (e.GrappleNextTurn && actions > 0)
+                {
+                    e.GrappleNextTurn = false;
+                    int gAtk = Rng.Next(2, 9) - e.AttackPenalty;
+                    int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+                    Console.WriteLine($"  {e.Name} goes for a grapple! {gAtk} vs your dodge {pDdg}.");
+                    if (gAtk >= pDdg)
+                    {
+                        int gDmg = Rng.Next(1, 5);
+                        P.HP -= gDmg;
+                        Console.WriteLine($"  Grappled! You take {gDmg} crush damage. HP:{P.HP}/{P.MaxHP}");
+                    }
+                    else Console.WriteLine($"  Grapple attempt failed!");
+                    actions--;
+                }
+
+                // HP > 6: attack with remaining actions
+                for (int i = 0; i < actions && P.HP > 0 && e.HP > 6; i++)
+                    EnemyAttack(e);
+
+                // HP 6 or below but > 5: still attacks if not fleeing
+                if (e.HP <= 6 && e.HP > 5)
+                    for (int i = 0; i < actions && P.HP > 0; i++)
+                        EnemyAttack(e);
+
+                continue;
             }
 
-            // Normal attacks
+            // Normal goblin: attack with all remaining actions
             for (int i = 0; i < actions && P.HP > 0; i++)
                 EnemyAttack(e);
+        }
+    }
+
+    // Player gets one free action when an enemy tries to flee.
+    // Returns true if the enemy was stopped (flee fails), false if they escape.
+    bool PlayerFreeActionOnFleeingEnemy(Enemy e)
+    {
+        Console.Write($"  Free response! [A]ttack or [G]rapple {e.Name}? ");
+        string choice = (Console.ReadLine() ?? "a").Trim().ToLower();
+
+        if (choice.StartsWith("g"))
+        {
+            int minG = 1 + P.GetFeatStacks("Closeliner");
+            int gRoll = Rng.Next(minG, 7);
+            int gDdg = Rng.Next(e.MinDodge, e.MaxDodge + 1) - 2;
+            Console.WriteLine($"  Grapple: {gRoll} vs {e.Name}'s dodge-2 ({gDdg}).");
+            if (gRoll >= gDdg)
+            {
+                Console.WriteLine($"  You grab {e.Name} — flee stopped!");
+                e.Grappled = true;
+                return true;
+            }
+            Console.WriteLine($"  Grapple missed — {e.Name} slips away.");
+            return false;
+        }
+        else
+        {
+            int aRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+            int aDdg = Rng.Next(e.MinDodge, e.MaxDodge + 1) - 2;
+            Console.WriteLine($"  Attack: {aRoll} vs {e.Name}'s dodge-2 ({aDdg}).");
+            if (aRoll >= aDdg)
+            {
+                int dmg = Rng.Next(P.MinDamage, P.MaxDamage + 1);
+                e.HP -= dmg;
+                Console.WriteLine($"  HIT! {dmg} dmg — flee stopped! {e.Name} HP:{e.HP}/{e.MaxHP}");
+                if (!e.Alive) HandleKill(e);
+                return true;
+            }
+            Console.WriteLine($"  Missed — {e.Name} gets away.");
+            return false;
         }
     }
 
