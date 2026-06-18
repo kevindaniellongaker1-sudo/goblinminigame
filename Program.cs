@@ -419,9 +419,16 @@ void SelectCharacterType(Player p)
     }
     else if (chosen == "Warrior")
     {
+        p.MaxDamage = 5; // 1-5 unarmed
         p.HeldWeapon = "Bastard Sword";
-        Console.WriteLine("  Starting weapon: Bastard Sword (2-8 atk, 2-8 dmg)");
+        Console.WriteLine("  Starting weapon: Bastard Sword (2-8 atk, 2-8 dmg)  Unarmed: 1-5");
         Console.WriteLine("  Bonus: attack/grapple free actions scale with level; +1 atk roll every 3 levels from L2");
+    }
+    else if (chosen == "Duelist")
+    {
+        p.HeldWeapon = "Rapier Sword";
+        Console.WriteLine("  Starting weapon: Rapier Sword (3-6 dmg)");
+        Console.WriteLine("  Bonus: +1 atk roll every 3 levels from L2; +1 damage die (1-2) every 4 levels from L2");
     }
 }
 
@@ -1563,8 +1570,19 @@ class CombatSession
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
         if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
 
-        int warriorAtkBonus = P.CharacterType == "Warrior" && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
-        PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
+        int warriorAtkBonus  = P.CharacterType == "Warrior"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
+        int duelistAtkBonus  = P.CharacterType == "Duelist"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
+
+        // Duelist: extra damage dice every 4 levels from L2 (die = 1 to maxDmg/minDmg)
+        if (P.CharacterType == "Duelist" && P.Level >= 2 && P.HeldWeapon != null)
+        {
+            int dUpgrades = (P.Level - 2) / 4 + 1;
+            var (_, _, bMin, bMax) = WeaponPickupStats(P.HeldWeapon);
+            int dieMax = bMin > 0 ? bMax / bMin : 1;
+            for (int di = 0; di < dUpgrades; di++) dmgBonus += Rng.Next(1, dieMax + 1);
+        }
+
+        PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus + duelistAtkBonus, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
 
         // Off-hand (Double Tap)
         if (P.HasFeat("Double Tap") && target.Alive)
@@ -1870,6 +1888,7 @@ class CombatSession
         "Orc Longsword"  => (3, 9, 2, 10),
         "Troll Axe"      => (2, 12, 3, 12),
         "Bastard Sword"  => (2, 8, 2, 8),
+        "Rapier Sword"   => (1, 6, 3, 6),
         _ => (0, 0, 0, 0)
     };
 
