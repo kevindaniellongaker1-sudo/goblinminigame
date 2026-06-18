@@ -443,7 +443,8 @@ void SelectCharacterType(Player p)
     {
         p.MaxDamage = 4; // 1-4 unarmed
         p.HeldWeapon = "Rapier Sword";
-        Console.WriteLine("  Starting weapon: Rapier Sword (3-6 dmg)  Unarmed: 1-4");
+        p.DaggerCount = 6;
+        Console.WriteLine("  Starting weapon: Rapier Sword (3-6 dmg)  + 6 daggers (throwable, 20ft, 1-6 dmg)  Unarmed: 1-4");
         Console.WriteLine("  Bonus: Duelist Points (every 3 levels from L2) for special actions");
     }
     else if (chosen == "Archer")
@@ -508,6 +509,7 @@ void SaveGame(Player p, int groups)
         $"KnownSpells={string.Join("|", p.KnownSpells)}",
         $"DuelistPoints={p.DuelistPoints}",
         $"ArrowCount={p.ArrowCount}",
+        $"DaggerCount={p.DaggerCount}",
         $"SecondaryWeapon={p.SecondaryWeapon ?? ""}",
         $"GroupsDefeated={groups}",
     };
@@ -564,6 +566,7 @@ bool TryLoadGame(Player p, string filePath)
         p.KnownSpells = G("KnownSpells").Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
         p.DuelistPoints = I("DuelistPoints");
         p.ArrowCount = I("ArrowCount");
+        p.DaggerCount = I("DaggerCount");
         p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
 
         groupsDefeated = I("GroupsDefeated");
@@ -700,6 +703,7 @@ class Player
     public string? HeldWeapon = null;
     public string? SecondaryWeapon = null;
     public int ArrowCount = 0;
+    public int DaggerCount = 0;
     public int DuelistPoints = 0;
     public Dictionary<string, int> DuelistEffectTurns = new();
     public string CharacterType = "Warrior";
@@ -1446,6 +1450,41 @@ class CombatSession
                     break;
                 }
 
+                case "throw dagger":
+                {
+                    var throwTarget = PickTarget(alive);
+                    if (throwTarget == null) continue;
+                    float thrDaggerFeet = PlayerPos.Feet(throwTarget.Position);
+                    if (thrDaggerFeet > 20f)
+                    {
+                        Console.WriteLine("  Too far! Max 20ft for thrown dagger.");
+                        continue;
+                    }
+                    int tdAtk = Rng.Next(1, 7);
+                    int tdDdg = Rng.Next(throwTarget.MinDodge, throwTarget.MaxDodge + 1) - throwTarget.DodgePenalty;
+                    Console.WriteLine($"  Throw dagger! ({thrDaggerFeet:F0}ft) Roll {tdAtk} vs {throwTarget.Name}'s dodge {tdDdg}. ({P.DaggerCount - 1} daggers left)");
+                    P.DaggerCount--;
+                    GridPos tdLand;
+                    if (tdAtk >= tdDdg && !EnemyBlocks(throwTarget, tdAtk))
+                    {
+                        int tdDmg = Rng.Next(1, 7);
+                        tdDmg = ReduceByToughHide(throwTarget, tdDmg);
+                        Console.WriteLine($"  HIT! {tdDmg} dmg → {throwTarget.Name} HP:{throwTarget.HP - tdDmg}/{throwTarget.MaxHP}");
+                        throwTarget.HP -= tdDmg;
+                        if (!throwTarget.Alive) HandleKill(throwTarget);
+                        tdLand = RandomAdjacent(throwTarget.Position);
+                    }
+                    else
+                    {
+                        Console.WriteLine("  MISS!");
+                        tdLand = RandomAdjacent(throwTarget.Position);
+                    }
+                    GroundWeapons.Add((tdLand, "Goblin Dagger"));
+                    Console.WriteLine($"  Dagger lands at ({tdLand.X},{tdLand.Y}).");
+                    justBlocked = false;
+                    break;
+                }
+
                 case "club sweep":
                 {
                     Console.Write("  Club sweep direction [N/S/E/W]: ");
@@ -1636,6 +1675,7 @@ class CombatSession
         bool deadGoblin = Active.Any(e => !e.Alive && e is Goblin);
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
         if (P.HeldWeapon is "Goblin Dagger" or "Troll Axe") o.Add("throw weapon");
+        if (P.DaggerCount > 0 && !P.IsGrappled) o.Add("throw dagger");
         if (P.HeldWeapon == "Ogre Club" && P.HasFeat("Giant's Strength")) o.Add("club sweep");
         int dMaxPts = P.Level < 2 ? 0 : (P.Level <= 20 ? (P.Level-2)/3+1 : 7 + 2*((P.Level-20)/3));
         if (P.CharacterType == "Duelist" && P.DuelistPoints > 0 && dMaxPts > 0) o.Add("duelist action");
