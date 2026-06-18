@@ -2178,6 +2178,7 @@ class CombatSession
     {
         SpellGoblin => "",
         Goblin => "Goblin Dagger",
+        OrcBarbarian => "Battle Axe",
         Orc => "Orc Longsword",
         Troll => "Troll Axe",
         Ogre => "Ogre Club",
@@ -2764,6 +2765,39 @@ class CombatSession
                         EnemyAttack(e);
                 }
 
+                continue;
+            }
+
+            // ── Orc Barbarian AI ───────────────────────────────────────────
+            if (e is OrcBarbarian ob)
+            {
+                if (e.HP < e.HpAtTurnStart) e.ConsecutiveDmgTurns++;
+                else e.ConsecutiveDmgTurns = 0;
+                if (e.ConsecutiveDmgTurns >= 4) { e.GrappleNextTurn = true; e.ConsecutiveDmgTurns = 0; }
+
+                if (e.GrappleNextTurn && actions > 0)
+                {
+                    e.GrappleNextTurn = false;
+                    OrcGrappleAction(e);
+                    actions--;
+                }
+
+                MoveTowardPlayer(e, ref actions);
+                for (int i = 0; i < actions && P.HP > 0; i++)
+                {
+                    if (P.IsGrappled && P.GrappledBy == e)
+                        OrcMaintainGrapple(e);
+                    else if (e.Position.IsCardinalAdjacent(PlayerPos))
+                        EnemyAttack(e);
+                    else
+                    {
+                        float obFeet = e.Position.Feet(PlayerPos);
+                        if (obFeet <= 20f && ob.HandAxeCount > 0)
+                            DoOrcBarbAxeThrow(ob);
+                        else
+                            MoveTowardPlayer(e, ref actions, suppressCost: true);
+                    }
+                }
                 continue;
             }
 
@@ -3379,7 +3413,7 @@ class CombatSession
     void ShowMap(List<Enemy> alive)
     {
         int hw = 10, hh = 5;
-        Console.WriteLine("  Map (@ you  g goblin  s spell-goblin  h hob  o orc  t troll  O ogre  x axe  w weapon):");
+        Console.WriteLine("  Map (@ you  g goblin  s spell-goblin  h hob  o orc  B orc-barb  t troll  O ogre  x axe  w weapon):");
         for (int y = PlayerPos.Y - hh; y <= PlayerPos.Y + hh; y++)
         {
             Console.Write("  ");
@@ -3404,6 +3438,7 @@ class CombatSession
         SpellGoblin => 's',
         Goblin => 'g',
         Hobgoblin => 'h',
+        OrcBarbarian => 'B',
         Orc => 'o',
         Troll => 't',
         Ogre => 'O',
@@ -3489,6 +3524,27 @@ class CombatSession
                 break;
             }
         }
+    }
+
+    // ── ORC BARBARIAN AXE THROW ───────────────────────────────────────────
+
+    void DoOrcBarbAxeThrow(OrcBarbarian ob)
+    {
+        float feet = ob.Position.Feet(PlayerPos);
+        int atkRoll = Rng.Next(ob.MinAttack, ob.MaxAttack + 1) - ob.AttackPenalty;
+        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1) - P.FrostPenalty - P.BrokenLimbs.Count(l => l.Contains("Leg"));
+        Console.WriteLine($"  {ob.Name} hurls a hand axe! ({feet:F0}ft) Roll {atkRoll} vs your dodge {pDdg}. ({ob.HandAxeCount - 1} axes left)");
+        ob.HandAxeCount--;
+        if (atkRoll >= pDdg)
+        {
+            int dmg = Rng.Next(2, 9); // hand axe throw: 2-8
+            if (P.Defending) dmg = Math.Max(1, dmg / 2);
+            if (P.ArmorDamageReduction > 0) dmg = Math.Max(1, dmg - P.ArmorDamageReduction);
+            Console.WriteLine($"  Hand axe HIT! {dmg} damage. HP:{P.HP - dmg}/{P.MaxHP}");
+            P.HP -= dmg;
+        }
+        else Console.WriteLine("  Hand axe MISS!");
+        GroundWeapons.Add((RandomAdjacent(PlayerPos), "Hand Axe"));
     }
 
     // ── TROLL AXE THROW ───────────────────────────────────────────────────
