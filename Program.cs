@@ -616,6 +616,9 @@ class Player
     public List<string> KnownSpells = new();
     public int BurningDmg = 0, BurningTurns = 0;
     public int FrostPenalty = 0, FrostTurns = 0;
+    public int GrappleEscapePrePaid = 0;
+    public bool MmaGrappleFreeAction = false;
+    public Enemy? PostGrappleBreakTarget = null;
 
     public Player(Random rng)
     {
@@ -1029,6 +1032,16 @@ class CombatSession
         int actLeft = 2 + P.AdditionalActions;
         if (P.HasFeat("Chidia")) actLeft += 2;
 
+        // MMA: +1 free action after instant grapple break on previous enemy turn
+        if (P.MmaGrappleFreeAction) { P.MmaGrappleFreeAction = false; actLeft++; Console.WriteLine("  [MMA] Instant break last turn — +1 free action!"); }
+        // Tier 2 grapple style: deduct actions pre-paid for breaking free on enemy's turn
+        if (P.GrappleEscapePrePaid > 0 && actLeft > 0)
+        {
+            int cost = Math.Min(P.GrappleEscapePrePaid, actLeft);
+            actLeft -= cost; P.GrappleEscapePrePaid -= cost;
+            Console.WriteLine($"  [Grapple Escape Cost] {cost} action(s) spent on last turn's break-free.");
+        }
+
         bool fled = false;
         bool justBlocked = false;
         Enemy? blockTarget = null;
@@ -1043,6 +1056,54 @@ class CombatSession
             // Clear grapple if grappler is dead
             if (P.IsGrappled && (P.GrappledBy == null || !P.GrappledBy.Alive))
             { P.IsGrappled = false; P.GrappledBy = null; }
+
+            int gst = GrappleStyleTier();
+
+            // Tier 4: free action after breaking free (grapple back or close to 5ft)
+            if (P.PostGrappleBreakTarget != null && gst >= 4)
+            {
+                var pgbt = P.PostGrappleBreakTarget; P.PostGrappleBreakTarget = null;
+                if (pgbt.Alive)
+                {
+                    Console.Write($"  [Tier 4] Free: [G]rapple {pgbt.Name} or [M]ove within 5ft? ");
+                    string t4 = (Console.ReadLine() ?? "").Trim().ToLower();
+                    if (t4.StartsWith("g")) DoGrapple(pgbt);
+                    else if (t4.StartsWith("m"))
+                    {
+                        int steps = 2;
+                        while (steps-- > 0 && PlayerPos.ManhattanDist(pgbt.Position) > 1)
+                            PlayerPos = StepToward(PlayerPos, pgbt.Position);
+                        Console.WriteLine($"  You close within 5ft of {pgbt.Name}. ({PlayerPos.X},{PlayerPos.Y})");
+                    }
+                }
+            }
+
+            // Tier 1+: auto break roll + free melee on grappler each action
+            if (P.IsGrappled && P.GrappledBy != null && P.GrappledBy.Alive && gst >= 1)
+            {
+                var glr = P.GrappledBy;
+                bool glOgre = glr is Ogre;
+                int glMin = (glOgre ? 8 : P.MinGrapple + P.GetFeatStacks("Closeliner"))
+                            + (gst >= 2 ? 1 : 0) + (gst >= 3 ? 1 : 0);
+                int glMax = glOgre ? 12 : P.MaxGrapple;
+                int glP = Rng.Next(glMin, glMax + 1), glE = Rng.Next(glr.MinGrapple, glr.MaxGrapple + 1);
+                Console.WriteLine($"  [Grapple Style T{gst}] Auto break: your {glP} vs {glr.Name}'s {glE}.");
+                if (glP >= glE)
+                {
+                    if (gst >= 4) P.PostGrappleBreakTarget = glr;
+                    P.IsGrappled = false; P.GrappledBy = null;
+                    Console.WriteLine("  You break free!");
+                }
+                else Console.WriteLine("  Still held.");
+
+                // Free melee on grappler (if still held)
+                if (P.IsGrappled && P.GrappledBy != null && P.GrappledBy.Alive)
+                {
+                    Console.Write($"  [Grapple Style] Free melee on {P.GrappledBy.Name}? (y/n): ");
+                    if ((Console.ReadLine() ?? "").Trim().ToLower().StartsWith("y"))
+                        DoAttack(P.GrappledBy);
+                }
+            }
 
             var opts = BuildOpts(justBlocked, alive, blockTarget);
             for (int i = 0; i < opts.Count; i++) Console.Write($"[{i + 1}]{opts[i]}  ");
@@ -1106,15 +1167,23 @@ class CombatSession
                     if (!P.IsGrappled || P.GrappledBy == null || !P.GrappledBy.Alive)
                     { P.IsGrappled = false; P.GrappledBy = null; justBlocked = false; break; }
                     bool bgOgre = P.GrappledBy is Ogre;
-                    int bgMin = bgOgre ? 8 : P.MinGrapple + P.GetFeatStacks("Closeliner");
+                    int bgMin = (bgOgre ? 8 : P.MinGrapple + P.GetFeatStacks("Closeliner"))
+                                + (gst >= 2 ? 1 : 0) + (gst >= 3 ? 1 : 0);
                     int bgMax = bgOgre ? 12 : P.MaxGrapple;
                     int bgPGr = Rng.Next(bgMin, bgMax + 1);
                     int bgEGr = Rng.Next(P.GrappledBy.MinGrapple, P.GrappledBy.MaxGrapple + 1);
                     string bgType = bgOgre ? "Counter-grapple (8-12)" : "Break-free";
                     Console.WriteLine($"  [GRAPPLED by {P.GrappledBy.Name}] {bgType}: your {bgPGr} vs their {bgEGr}.");
-                    if (bgPGr >= bgEGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
+                    if (bgPGr >= bgEGr)
+                    {
+                        var bgGrappler = P.GrappledBy;
+                        P.IsGrappled = false; P.GrappledBy = null;
+                        Console.WriteLine("  You break free!");
+                        if (gst >= 4) P.PostGrappleBreakTarget = bgGrappler;
+                    }
                     else Console.WriteLine("  Still held — you can act but cannot run.");
                     justBlocked = false;
+                    if (gst >= 3) continue; // tier 3+: free action
                     break;
                 }
 
@@ -1587,10 +1656,15 @@ class CombatSession
 
     // ── GRAPPLE ───────────────────────────────────────────────────────────
 
+    int GrappleStyleTier() =>
+        new[] { "Kehon", "Judo", "Taekwondo", "Chidia" }.Count(f => P.HasFeat(f));
+
     void DoGrapple(Enemy target)
     {
-        int minG = P.MinGrapple + P.GetFeatStacks("Closeliner");
-        int gRoll = Rng.Next(minG, P.MaxGrapple + 1);
+        int gst2 = GrappleStyleTier();
+        int minG = P.MinGrapple + P.GetFeatStacks("Closeliner") + (gst2 >= 2 ? 1 : 0);
+        int maxG = P.MaxGrapple + (gst2 >= 3 ? 2 : 0);
+        int gRoll = Rng.Next(minG, maxG + 1);
         int dRoll = Rng.Next(target.MinDodge, target.MaxDodge + 1);
         Console.WriteLine($"  Grapple! Roll {gRoll} vs {target.Name}'s dodge {dRoll}.");
         if (gRoll < dRoll) { Console.WriteLine("  Grapple FAILED!"); return; }
@@ -2244,6 +2318,12 @@ class CombatSession
             {
                 P.IsGrappled = true; P.GrappledBy = e;
                 Console.WriteLine($"  {e.Name} grabs you!");
+                if (P.HasFeat("MMA"))
+                {
+                    P.IsGrappled = false; P.GrappledBy = null;
+                    P.MmaGrappleFreeAction = true;
+                    Console.WriteLine("  [MMA] You slip free immediately! +1 free action next turn.");
+                }
             }
             else Console.WriteLine($"  Grapple missed!");
         }
@@ -2254,13 +2334,23 @@ class CombatSession
         int gDmg = Rng.Next(e.GrappleDmgMin, e.GrappleDmgMax + 1);
         P.HP -= gDmg;
         Console.WriteLine($"  {e.Name} crushes you for {gDmg} damage! HP:{P.HP}/{P.MaxHP}");
-        // Player rolls to break free each grapple action
-        int minG = P.MinGrapple + P.GetFeatStacks("Closeliner");
-        int pGr = Rng.Next(minG, P.MaxGrapple + 1);
-        int eGr = Rng.Next(e.MinGrapple, e.MaxGrapple + 1);
-        Console.WriteLine($"  Break-free roll: your {pGr} vs {e.Name}'s {eGr}.");
-        if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
-        else Console.WriteLine("  Still held!");
+        int tier = GrappleStyleTier();
+        if (tier >= 1)
+        {
+            int minG = P.MinGrapple + P.GetFeatStacks("Closeliner") + (tier >= 2 ? 1 : 0) + (tier >= 3 ? 1 : 0);
+            int pGr = Rng.Next(minG, P.MaxGrapple + 1);
+            int eGr = Rng.Next(e.MinGrapple, e.MaxGrapple + 1);
+            Console.WriteLine($"  [Grapple Style T{tier}] Break-free on enemy action: your {pGr} vs {e.Name}'s {eGr}.");
+            if (pGr >= eGr)
+            {
+                if (tier >= 4) P.PostGrappleBreakTarget = e;
+                P.IsGrappled = false; P.GrappledBy = null;
+                Console.WriteLine("  You break free!");
+                if (tier == 2) { P.GrappleEscapePrePaid++; Console.WriteLine("  [Tier 2] Costs 1 action next turn."); }
+                // tier 3+: free (no cost)
+            }
+            else Console.WriteLine("  Still held!");
+        }
     }
 
     void OgreGrappleAction(Enemy e, bool bothHands)
@@ -2279,6 +2369,12 @@ class CombatSession
             {
                 P.IsGrappled = true; P.GrappledBy = e;
                 Console.WriteLine($"  {e.Name} seizes you{(bothHands ? " with crushing force" : "")}!");
+                if (P.HasFeat("MMA"))
+                {
+                    P.IsGrappled = false; P.GrappledBy = null;
+                    P.MmaGrappleFreeAction = true;
+                    Console.WriteLine("  [MMA] You slip free immediately! +1 free action next turn.");
+                }
             }
             else Console.WriteLine($"  Ogre's grapple missed!");
         }
@@ -2287,15 +2383,22 @@ class CombatSession
     void OgreMaintainGrapple(Enemy e)
     {
         int gDmg = e.DroppedWeapon
-            ? Rng.Next(e.GrappleDmgMin * 2, e.GrappleDmgMax * 2 + 1)   // both hands = double damage
+            ? Rng.Next(e.GrappleDmgMin * 2, e.GrappleDmgMax * 2 + 1)
             : Rng.Next(e.GrappleDmgMin, e.GrappleDmgMax + 1);
         P.HP -= gDmg;
         Console.WriteLine($"  {e.Name} crushes you for {gDmg} damage! HP:{P.HP}/{P.MaxHP}");
-        // Player must use counter-grapple 8-12 to break free
-        int pGr = Rng.Next(8, 13);
+        int tier = GrappleStyleTier();
+        int pGrMin = 8 + (tier >= 2 ? 1 : 0) + (tier >= 3 ? 1 : 0);
+        int pGr = Rng.Next(pGrMin, 13);
         int eGr = Rng.Next(e.MinGrapple, e.MaxGrapple + 1);
-        Console.WriteLine($"  Counter-grapple (8-12): your {pGr} vs {e.Name}'s {eGr}.");
-        if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break the ogre's grip!"); }
+        Console.WriteLine($"  Counter-grapple ({pGrMin}-12): your {pGr} vs {e.Name}'s {eGr}.");
+        if (pGr >= eGr)
+        {
+            if (tier >= 4) P.PostGrappleBreakTarget = e;
+            P.IsGrappled = false; P.GrappledBy = null;
+            Console.WriteLine("  You break the ogre's grip!");
+            if (tier == 2) { P.GrappleEscapePrePaid++; Console.WriteLine("  [Tier 2] Costs 1 action next turn."); }
+        }
         else Console.WriteLine("  Still held!");
     }
 
