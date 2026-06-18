@@ -617,8 +617,8 @@ class Player
     public int BurningDmg = 0, BurningTurns = 0;
     public int FrostPenalty = 0, FrostTurns = 0;
     public int GrappleEscapePrePaid = 0;
-    public bool MmaGrappleFreeAction = false;
     public Enemy? PostGrappleBreakTarget = null;
+    public string? HeldWeapon = null;
 
     public Player(Random rng)
     {
@@ -687,6 +687,7 @@ abstract class Enemy
     public int OffhandMinDmg = 1, OffhandMaxDmg = 4;
     public bool PowerAttackMode = false;
     public bool DroppedWeapon = false;
+    public GridPos? WeaponPos = null;
     public int UnarmedMinDmg = 0, UnarmedMaxDmg = 0;
     public bool HasShield = false;
     public bool ShieldLost = false;
@@ -699,7 +700,7 @@ abstract class Enemy
         if (KnockedOut) parts.Add($"KO({KOTurns}t)");
         if (KnockedDown) parts.Add("Down");
         if (OffBalance) parts.Add("Off-balance");
-        if (Disarmed) parts.Add($"Disarmed({WeaponDistance}ft)");
+        if (Disarmed) parts.Add(WeaponPos.HasValue ? $"Disarmed(weapon at {WeaponPos.Value.X},{WeaponPos.Value.Y})" : "Disarmed");
         if (ShieldLost) parts.Add("No Shield");
         if (Grappled) parts.Add("Grappled");
         if (BleedDmg > 0) parts.Add($"Bleed({BleedDmg})");
@@ -893,6 +894,7 @@ class CombatSession
     readonly Action<int> GainXP;
     List<Enemy> Active;
     List<(List<Enemy> batch, int turns)> Pending = new();
+    List<(GridPos Pos, string Type)> GroundWeapons = new();
     public bool PlayerFled = false;
     GridPos PlayerPos;
 
@@ -1032,8 +1034,6 @@ class CombatSession
         int actLeft = 2 + P.AdditionalActions;
         if (P.HasFeat("Chidia")) actLeft += 2;
 
-        // MMA: +1 free action after instant grapple break on previous enemy turn
-        if (P.MmaGrappleFreeAction) { P.MmaGrappleFreeAction = false; actLeft++; Console.WriteLine("  [MMA] Instant break last turn — +1 free action!"); }
         // Tier 2 grapple style: deduct actions pre-paid for breaking free on enemy's turn
         if (P.GrappleEscapePrePaid > 0 && actLeft > 0)
         {
@@ -1301,6 +1301,103 @@ class CombatSession
                     Console.WriteLine($"  You grab a goblin sword! Off-hand max damage → {P.OffhandMaxDamage}.");
                     break;
 
+                case "throw weapon":
+                {
+                    var throwTarget = PickTarget(alive);
+                    if (throwTarget == null) continue;
+                    float throwFeet = PlayerPos.Feet(throwTarget.Position);
+                    int throwMaxFt = P.HeldWeapon == "Goblin Dagger" ? 20 : 15;
+                    if (throwFeet > throwMaxFt)
+                    {
+                        Console.WriteLine($"  Too far! Max {throwMaxFt}ft for {P.HeldWeapon}.");
+                        continue;
+                    }
+                    int thrAtk, thrDmgMin, thrDmgMax;
+                    if (P.HeldWeapon == "Goblin Dagger")
+                    {
+                        thrAtk = Rng.Next(1, 7);
+                        thrDmgMin = 1; thrDmgMax = 6;
+                    }
+                    else // Troll Axe
+                    {
+                        thrAtk = Rng.Next(2, 13);
+                        if (throwFeet <= 7.5f) { thrDmgMin = 2; thrDmgMax = 6; }
+                        else if (throwFeet <= 10f) { thrDmgMin = 1; thrDmgMax = 6; }
+                        else { thrDmgMin = 1; thrDmgMax = 2; }
+                    }
+                    int thrDdg = Rng.Next(throwTarget.MinDodge, throwTarget.MaxDodge + 1) - throwTarget.DodgePenalty;
+                    Console.WriteLine($"  Throw {P.HeldWeapon}! ({throwFeet:F0}ft) Roll {thrAtk} vs {throwTarget.Name}'s dodge {thrDdg}.");
+                    string thrWeap = P.HeldWeapon!;
+                    P.HeldWeapon = null;
+                    GridPos thrLand;
+                    if (thrAtk >= thrDdg && !EnemyBlocks(throwTarget, thrAtk))
+                    {
+                        int thrDmg = Rng.Next(thrDmgMin, thrDmgMax + 1);
+                        thrDmg = ReduceByToughHide(throwTarget, thrDmg);
+                        Console.WriteLine($"  HIT! {thrDmg} dmg → {throwTarget.Name} HP:{throwTarget.HP - thrDmg}/{throwTarget.MaxHP}");
+                        throwTarget.HP -= thrDmg;
+                        if (!throwTarget.Alive) HandleKill(throwTarget);
+                        thrLand = RandomAdjacent(throwTarget.Position);
+                    }
+                    else
+                    {
+                        Console.WriteLine("  MISS!");
+                        thrLand = RandomAdjacent(throwTarget.Position);
+                    }
+                    GroundWeapons.Add((thrLand, thrWeap));
+                    Console.WriteLine($"  {thrWeap} lands at ({thrLand.X},{thrLand.Y}).");
+                    justBlocked = false;
+                    break;
+                }
+
+                case "club sweep":
+                {
+                    Console.Write("  Club sweep direction [N/S/E/W]: ");
+                    string swDir = (Console.ReadLine() ?? "").Trim().ToLower();
+                    int swdx = swDir.StartsWith("e") ? 1 : swDir.StartsWith("w") ? -1 : 0;
+                    int swdy = swDir.StartsWith("s") ? 1 : swDir.StartsWith("n") ? -1 : 0;
+                    if (swdx == 0 && swdy == 0) { Console.WriteLine("  Invalid direction (N/S/E/W)."); continue; }
+                    var swSquares = new[] { new GridPos(PlayerPos.X + swdx, PlayerPos.Y + swdy),
+                                           new GridPos(PlayerPos.X + swdx * 2, PlayerPos.Y + swdy * 2) };
+                    Console.WriteLine($"  You sweep the Ogre Club in a wide arc!");
+                    foreach (var sq in swSquares)
+                    {
+                        if (sq.X < 0 || sq.X > 49 || sq.Y < 0 || sq.Y > 49) continue;
+                        foreach (var swE in alive.Where(e => e.Alive && e.Position.SameAs(sq)).ToList())
+                        {
+                            int swDmg = Rng.Next(3, 13);
+                            swDmg = ReduceByToughHide(swE, swDmg);
+                            Console.WriteLine($"  Club hits {swE.Name} for {swDmg} dmg! HP:{swE.HP - swDmg}/{swE.MaxHP}");
+                            swE.HP -= swDmg;
+                            if (!swE.Alive) HandleKill(swE);
+                        }
+                    }
+                    justBlocked = false;
+                    break;
+                }
+
+                case "pick up weapon":
+                {
+                    var nearby = GroundWeapons.Where(w => PlayerPos.ManhattanDist(w.Pos) <= 1).ToList();
+                    if (!nearby.Any()) { Console.WriteLine("  No weapon within reach."); continue; }
+                    for (int wi = 0; wi < nearby.Count; wi++)
+                        Console.WriteLine($"  [{wi + 1}] {nearby[wi].Type} at ({nearby[wi].Pos.X},{nearby[wi].Pos.Y})");
+                    Console.Write("  Pick up #: ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out int wpick) || wpick < 1 || wpick > nearby.Count)
+                    { Console.WriteLine("  Invalid."); continue; }
+                    var picked = nearby[wpick - 1];
+                    if (P.HeldWeapon != null)
+                    {
+                        GroundWeapons.Add((PlayerPos, P.HeldWeapon));
+                        Console.WriteLine($"  You drop your {P.HeldWeapon} to pick up the {picked.Type}.");
+                    }
+                    GroundWeapons.Remove(picked);
+                    P.HeldWeapon = picked.Type;
+                    Console.WriteLine($"  You pick up the {picked.Type}!");
+                    justBlocked = false;
+                    break;
+                }
+
                 default:
                     Console.WriteLine($"  Unknown action '{chosen}'. Try again.");
                     continue;
@@ -1321,7 +1418,10 @@ class CombatSession
 
     List<string> BuildOpts(bool justBlocked, List<Enemy> alive, Enemy? blockTarget = null)
     {
-        var o = new List<string> { "attack", "grapple", "move", "defend", "healing potion", "run" };
+        var o = new List<string>();
+        if (!P.IsGrappled && P.HeldWeapon != "Ogre Club") o.Add("attack");
+        if (!P.IsGrappled) o.Add("grapple");
+        o.AddRange(new[] { "move", "defend", "healing potion", "run" });
         if (P.IsGrappled) o.Add("break grapple");
         if (P.HasFeat("Block")) o.Add("block");
         if (P.HasFeat("Parry") && justBlocked && !(blockTarget is Ogre)) o.Add("parry");
@@ -1329,6 +1429,9 @@ class CombatSession
         if (P.KnownSpells.Any()) o.Add("cast spell");
         bool deadGoblin = Active.Any(e => !e.Alive && e is Goblin);
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
+        if (P.HeldWeapon is "Goblin Dagger" or "Troll Axe") o.Add("throw weapon");
+        if (P.HeldWeapon == "Ogre Club") o.Add("club sweep");
+        if (GroundWeapons.Any(w => PlayerPos.ManhattanDist(w.Pos) <= 1)) o.Add("pick up weapon");
         return o;
     }
 
@@ -1370,10 +1473,22 @@ class CombatSession
         if (useSunder) atkPen--;
         if (useSap) atkPen -= 2;
 
-        int minAtk = P.MinAttack + (P.HasFeat("Talented") ? P.GetFeatStacks("Talented") : 0);
-        int maxAtk = P.MaxAttack;
-        int minDmg = P.MinDamage + (P.HasFeat("Built") ? P.GetFeatStacks("Built") : 0);
-        int maxDmg = P.MaxDamage;
+        int minAtk, maxAtk, minDmg, maxDmg;
+        if (P.HeldWeapon != null && P.HeldWeapon != "Ogre Club")
+        {
+            var (wa, xA, wd, xD) = WeaponPickupStats(P.HeldWeapon);
+            minAtk = wa + (P.HasFeat("Talented") ? P.GetFeatStacks("Talented") : 0);
+            maxAtk = xA;
+            minDmg = wd + (P.HasFeat("Built") ? P.GetFeatStacks("Built") : 0);
+            maxDmg = xD;
+        }
+        else
+        {
+            minAtk = P.MinAttack + (P.HasFeat("Talented") ? P.GetFeatStacks("Talented") : 0);
+            maxAtk = P.MaxAttack;
+            minDmg = P.MinDamage + (P.HasFeat("Built") ? P.GetFeatStacks("Built") : 0);
+            maxDmg = P.MaxDamage;
+        }
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
 
         PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
@@ -1458,8 +1573,11 @@ class CombatSession
                     return;
                 }
             }
-            Console.WriteLine($"  Disarm HIT! {target.Name}'s weapon flies 10 ft away!");
-            target.Disarmed = true; target.WeaponDistance = 10;
+            var disarmPos = RandomAdjacent(target.Position);
+            target.Disarmed = true; target.WeaponPos = disarmPos;
+            string disWpType = EnemyWeaponType(target);
+            if (disWpType.Length > 0) GroundWeapons.Add((disarmPos, disWpType));
+            Console.WriteLine($"  Disarm! {target.Name}'s weapon lands at ({disarmPos.X},{disarmPos.Y}).");
             if (P.HasFeat("Opportunist")) OpportunistPromptNote();
             return;
         }
@@ -1654,6 +1772,55 @@ class CombatSession
         }
     }
 
+    // ── WEAPON HELPERS ───────────────────────────────────────────────────
+
+    GridPos RandomAdjacent(GridPos p)
+    {
+        int[] dx = { 0, 0, 1, -1 }, dy = { 1, -1, 0, 0 };
+        int i = Rng.Next(4);
+        return new GridPos(Math.Clamp(p.X + dx[i], 0, 49), Math.Clamp(p.Y + dy[i], 0, 49));
+    }
+
+    string EnemyWeaponType(Enemy e) => e switch
+    {
+        SpellGoblin => "",
+        Goblin => "Goblin Dagger",
+        Orc => "Orc Longsword",
+        Troll => "Troll Axe",
+        Ogre => "Ogre Club",
+        _ => ""
+    };
+
+    (int MinAtk, int MaxAtk, int MinDmg, int MaxDmg) WeaponPickupStats(string w) => w switch
+    {
+        "Goblin Dagger" => (1, 6, 1, 6),
+        "Orc Longsword" => (3, 9, 2, 10),
+        "Troll Axe"     => (2, 12, 3, 12),
+        _ => (0, 0, 0, 0)
+    };
+
+    void DoMmaFreeAction(List<Enemy> alive)
+    {
+        if (!alive.Any()) return;
+        Console.WriteLine("  [MMA] Slip free! Immediate free action:");
+        Console.Write("  [A]ttack  [H]eal  [D]efend  [S]pell  [skip]: ");
+        string ch = (Console.ReadLine() ?? "").Trim().ToLower();
+        if (ch.StartsWith("a"))
+        {
+            var mt = PickTarget(alive);
+            if (mt != null) DoAttack(mt);
+        }
+        else if (ch.StartsWith("h")) DoHeal();
+        else if (ch.StartsWith("d")) { P.Defending = true; Console.WriteLine("  Defensive stance."); }
+        else if (ch.StartsWith("s") && P.KnownSpells.Any())
+        {
+            for (int si = 0; si < P.KnownSpells.Count; si++) Console.WriteLine($"  [{si+1}] {P.KnownSpells[si]}");
+            Console.Write("  Cast: ");
+            if (int.TryParse(Console.ReadLine()?.Trim(), out int sc) && sc >= 1 && sc <= P.KnownSpells.Count)
+                DoSpell(P.KnownSpells[sc - 1], alive);
+        }
+    }
+
     // ── GRAPPLE ───────────────────────────────────────────────────────────
 
     int GrappleStyleTier() =>
@@ -1683,8 +1850,12 @@ class CombatSession
         }
         else if (go.StartsWith("d") && P.HasFeat("Judo"))
         {
-            target.Grappled = false; target.Disarmed = true; target.WeaponDistance = 10;
-            Console.WriteLine($"  {target.Name}'s weapon wrenched away!");
+            target.Grappled = false; target.Disarmed = true;
+            var judoDrop = RandomAdjacent(target.Position);
+            target.WeaponPos = judoDrop;
+            string judoWpType = EnemyWeaponType(target);
+            if (judoWpType.Length > 0) GroundWeapons.Add((judoDrop, judoWpType));
+            Console.WriteLine($"  {target.Name}'s weapon wrenched to ({judoDrop.X},{judoDrop.Y})!");
         }
         else
         {
@@ -1906,12 +2077,14 @@ class CombatSession
             }
 
             // Retrieve weapon if disarmed
-            if (e.Disarmed && e.WeaponDistance > 0 && e.CanMove)
+            if (e.Disarmed && e.WeaponPos.HasValue && e.CanMove)
             {
                 if (actions >= 2)
                 {
                     Console.WriteLine($"  {e.Name} retrieves their weapon.");
-                    e.Disarmed = false; e.WeaponDistance = 0; actions -= 2;
+                    var rPos = e.WeaponPos.Value;
+                    GroundWeapons.RemoveAll(w => w.Pos.SameAs(rPos));
+                    e.Disarmed = false; e.WeaponPos = null; actions -= 2;
                 }
                 else { Console.WriteLine($"  {e.Name} moves toward their weapon."); actions = 0; }
                 if (actions <= 0) continue;
@@ -2318,11 +2491,17 @@ class CombatSession
             {
                 P.IsGrappled = true; P.GrappledBy = e;
                 Console.WriteLine($"  {e.Name} grabs you!");
+                if (P.HeldWeapon != null)
+                {
+                    var wDrop = RandomAdjacent(PlayerPos);
+                    GroundWeapons.Add((wDrop, P.HeldWeapon));
+                    Console.WriteLine($"  You drop your {P.HeldWeapon}! ({wDrop.X},{wDrop.Y})");
+                    P.HeldWeapon = null;
+                }
                 if (P.HasFeat("MMA"))
                 {
                     P.IsGrappled = false; P.GrappledBy = null;
-                    P.MmaGrappleFreeAction = true;
-                    Console.WriteLine("  [MMA] You slip free immediately! +1 free action next turn.");
+                    DoMmaFreeAction(Active.Where(e2 => e2.Alive).ToList());
                 }
             }
             else Console.WriteLine($"  Grapple missed!");
@@ -2369,11 +2548,17 @@ class CombatSession
             {
                 P.IsGrappled = true; P.GrappledBy = e;
                 Console.WriteLine($"  {e.Name} seizes you{(bothHands ? " with crushing force" : "")}!");
+                if (P.HeldWeapon != null)
+                {
+                    var wDrop = RandomAdjacent(PlayerPos);
+                    GroundWeapons.Add((wDrop, P.HeldWeapon));
+                    Console.WriteLine($"  You drop your {P.HeldWeapon}! ({wDrop.X},{wDrop.Y})");
+                    P.HeldWeapon = null;
+                }
                 if (P.HasFeat("MMA"))
                 {
                     P.IsGrappled = false; P.GrappledBy = null;
-                    P.MmaGrappleFreeAction = true;
-                    Console.WriteLine("  [MMA] You slip free immediately! +1 free action next turn.");
+                    DoMmaFreeAction(Active.Where(e2 => e2.Alive).ToList());
                 }
             }
             else Console.WriteLine($"  Ogre's grapple missed!");
@@ -2588,7 +2773,7 @@ class CombatSession
     void ShowMap(List<Enemy> alive)
     {
         int hw = 10, hh = 5;
-        Console.WriteLine("  Map (@ you  g goblin  s spell-goblin  h hob  o orc  t troll  O ogre  x axe):");
+        Console.WriteLine("  Map (@ you  g goblin  s spell-goblin  h hob  o orc  t troll  O ogre  x axe  w weapon):");
         for (int y = PlayerPos.Y - hh; y <= PlayerPos.Y + hh; y++)
         {
             Console.Write("  ");
@@ -2600,7 +2785,9 @@ class CombatSession
                 bool isAxe = Active.OfType<Troll>().Any(tr => tr.ThrownAxePositions.Any(ap => ap.SameAs(pos)));
                 if (isAxe) { Console.Write('x'); continue; }
                 var en = alive.FirstOrDefault(a => a.Position.SameAs(pos));
-                Console.Write(en != null ? EnemyChar(en) : '.');
+                if (en != null) { Console.Write(EnemyChar(en)); continue; }
+                bool isWeapon = GroundWeapons.Any(w => w.Pos.SameAs(pos));
+                Console.Write(isWeapon ? 'w' : '.');
             }
             Console.WriteLine();
         }
