@@ -2,6 +2,33 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+
+// ── Graphics window (main thread) + game logic (background thread) ────────
+
+var sharedState = new SharedGameState();
+
+var gameThread = new Thread(() =>
+{
+    try   { RunGameLogic(sharedState); }
+    finally { sharedState.GameOver = true; }
+});
+gameThread.IsBackground = true;
+gameThread.Start();
+
+try
+{
+    var gfx = new GraphicsDisplay(sharedState);
+    gfx.Run();
+}
+catch { /* no display available — game continues in console-only mode */ }
+
+gameThread.Join();
+return;
+
+// ── All original top-level logic lives here ───────────────────────────────
+void RunGameLogic(SharedGameState state)
+{
 
 var rng = new Random();
 var player = new Player(rng);
@@ -71,7 +98,8 @@ while (true)
     Console.WriteLine($"──────────────────────────────────");
 
     var session = new CombatSession(player, group, rng, XpThreshold, GainXP,
-        groupsDefeated == 0 ? new GridPos(1, 48) : new GridPos(1, 25));
+        groupsDefeated == 0 ? new GridPos(1, 48) : new GridPos(1, 25),
+        state, waveNum);
     bool survived = session.Run();
 
     if (!survived)
@@ -670,6 +698,8 @@ void UpdateHiscores(string name, int wave, int level)
     Console.WriteLine($"  Score recorded: {name}  Wave {wave}  Level {level}");
 }
 
+} // ── end RunGameLogic ─────────────────────────────────────────────────────
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLASSES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1021,12 +1051,31 @@ class CombatSession
     List<(GridPos Pos, string Type)> GroundWeapons = new();
     public bool PlayerFled = false;
     GridPos PlayerPos;
+    SharedGameState? _displayState;
+    int _waveNum;
 
-    public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart)
+    public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart, SharedGameState? displayState = null, int waveNum = 0)
     {
         P = p; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
         PlayerPos = playerStart;
+        _displayState = displayState;
+        _waveNum = waveNum;
         PlaceEnemies(enemies, nearEdge: false);
+    }
+
+    void PushDisplay()
+    {
+        if (_displayState == null) return;
+        _displayState.Push(new RenderSnapshot
+        {
+            PlayerPos = PlayerPos,
+            PlayerHP = P.HP, PlayerMaxHP = P.MaxHP, PlayerLevel = P.Level,
+            WaveNum = _waveNum,
+            Enemies = Active.Where(e => e.Alive)
+                            .Select(e => (e.Position, e.TypeName, e.HP, e.MaxHP))
+                            .ToList(),
+            GroundWeapons = GroundWeapons.Select(w => w.Pos).ToList(),
+        });
     }
 
     public bool Run()
@@ -1038,6 +1087,7 @@ class CombatSession
             if (!alive.Any() && !Pending.Any()) break;
 
             turnNum++;
+            PushDisplay();
             Console.WriteLine($"\n━━━━ Turn {turnNum} ━━━━");
 
             // Player burning
