@@ -1631,12 +1631,12 @@ class CombatSession
         if (P.CharacterType == "Warrior" && !fled && P.HP > 0)
         {
             int wBonus = P.Level >= 2 ? (P.Level - 2) / 4 + 1 : 0;
-            var wAlive = alive.Where(e => e.Alive).ToList();
+            var wAlive = Active.Where(e => e.Alive).ToList();
             for (int wb = 0; wb < wBonus && wAlive.Any() && P.HP > 0; wb++)
             {
                 Console.Write($"\n  [Warrior Bonus {wb + 1}/{wBonus}] [A]ttack  [G]rapple  [skip]: ");
                 string wc = (Console.ReadLine() ?? "").Trim().ToLower();
-                wAlive = alive.Where(e => e.Alive).ToList();
+                wAlive = Active.Where(e => e.Alive).ToList();
                 if (!wAlive.Any()) break;
                 if (wc.StartsWith("a"))
                 {
