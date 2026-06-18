@@ -684,6 +684,9 @@ abstract class Enemy
     public int OffhandMinDmg = 1, OffhandMaxDmg = 4;
     public bool PowerAttackMode = false;
     public bool DroppedWeapon = false;
+    public int UnarmedMinDmg = 0, UnarmedMaxDmg = 0;
+    public bool HasShield = false;
+    public bool ShieldLost = false;
 
     public Enemy(string name, string typeName) { Name = name; TypeName = typeName; }
 
@@ -694,6 +697,7 @@ abstract class Enemy
         if (KnockedDown) parts.Add("Down");
         if (OffBalance) parts.Add("Off-balance");
         if (Disarmed) parts.Add($"Disarmed({WeaponDistance}ft)");
+        if (ShieldLost) parts.Add("No Shield");
         if (Grappled) parts.Add("Grappled");
         if (BleedDmg > 0) parts.Add($"Bleed({BleedDmg})");
         if (BurningDmg > 0) parts.Add($"Burning({BurningDmg}×{BurningTurns}t)");
@@ -722,6 +726,7 @@ class Goblin : Enemy
         MinAttack = 1; MaxAttack = 6;
         MinDamage = 1; MaxDamage = 6;
         MinDodge = 1; MaxDodge = 6;
+        UnarmedMinDmg = 1; UnarmedMaxDmg = 4;
         XPValue = 10;
     }
 }
@@ -764,6 +769,8 @@ class Orc : Enemy
         GrappleDmgMin = 2; GrappleDmgMax = 8;
         HasDoubleTap = true;
         HasBlock = true; BlockMin = 2; BlockMax = 10;
+        HasShield = true;
+        UnarmedMinDmg = 1; UnarmedMaxDmg = 6;
         XPValue = 30;
     }
 }
@@ -1033,20 +1040,9 @@ class CombatSession
 
             Console.WriteLine($"\n  [Actions: {actLeft}]");
 
-            // While grappled, auto-roll each action to break free
-            if (P.IsGrappled && P.GrappledBy != null && P.GrappledBy.Alive)
-            {
-                bool vsOgre = P.GrappledBy is Ogre;
-                int minG = vsOgre ? 8 : P.MinGrapple + P.GetFeatStacks("Closeliner");
-                int maxG = vsOgre ? 12 : P.MaxGrapple;
-                int pGr = Rng.Next(minG, maxG + 1);
-                int eGr = Rng.Next(P.GrappledBy.MinGrapple, P.GrappledBy.MaxGrapple + 1);
-                string breakType = vsOgre ? "Counter-grapple (8-12)" : "Break-free";
-                Console.WriteLine($"  [GRAPPLED by {P.GrappledBy.Name}] {breakType}: your {pGr} vs their {eGr}.");
-                if (pGr >= eGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
-                else Console.WriteLine("  Still held — you can act but cannot run.");
-            }
-            else if (P.IsGrappled) { P.IsGrappled = false; P.GrappledBy = null; } // grappler died
+            // Clear grapple if grappler is dead
+            if (P.IsGrappled && (P.GrappledBy == null || !P.GrappledBy.Alive))
+            { P.IsGrappled = false; P.GrappledBy = null; }
 
             var opts = BuildOpts(justBlocked, alive, blockTarget);
             for (int i = 0; i < opts.Count; i++) Console.Write($"[{i + 1}]{opts[i]}  ");
@@ -1101,6 +1097,23 @@ class CombatSession
                         Math.Clamp(PlayerPos.X + mdx * moveRoll, 0, 49),
                         Math.Clamp(PlayerPos.Y + mdy * moveRoll, 0, 49));
                     Console.WriteLine($"  You move {moveRoll} sq {dir.ToUpper()}. Now at ({PlayerPos.X},{PlayerPos.Y}).");
+                    justBlocked = false;
+                    break;
+                }
+
+                case "break grapple":
+                {
+                    if (!P.IsGrappled || P.GrappledBy == null || !P.GrappledBy.Alive)
+                    { P.IsGrappled = false; P.GrappledBy = null; justBlocked = false; break; }
+                    bool bgOgre = P.GrappledBy is Ogre;
+                    int bgMin = bgOgre ? 8 : P.MinGrapple + P.GetFeatStacks("Closeliner");
+                    int bgMax = bgOgre ? 12 : P.MaxGrapple;
+                    int bgPGr = Rng.Next(bgMin, bgMax + 1);
+                    int bgEGr = Rng.Next(P.GrappledBy.MinGrapple, P.GrappledBy.MaxGrapple + 1);
+                    string bgType = bgOgre ? "Counter-grapple (8-12)" : "Break-free";
+                    Console.WriteLine($"  [GRAPPLED by {P.GrappledBy.Name}] {bgType}: your {bgPGr} vs their {bgEGr}.");
+                    if (bgPGr >= bgEGr) { P.IsGrappled = false; P.GrappledBy = null; Console.WriteLine("  You break free!"); }
+                    else Console.WriteLine("  Still held — you can act but cannot run.");
                     justBlocked = false;
                     break;
                 }
@@ -1240,6 +1253,7 @@ class CombatSession
     List<string> BuildOpts(bool justBlocked, List<Enemy> alive, Enemy? blockTarget = null)
     {
         var o = new List<string> { "attack", "grapple", "move", "defend", "healing potion", "run" };
+        if (P.IsGrappled) o.Add("break grapple");
         if (P.HasFeat("Block")) o.Add("block");
         if (P.HasFeat("Parry") && justBlocked && !(blockTarget is Ogre)) o.Add("parry");
         if (P.HasFeat("Bard Song")) o.Add("bard song");
@@ -1362,6 +1376,19 @@ class CombatSession
 
         if (disarm)
         {
+            bool canTargetShield = target.HasShield && !target.ShieldLost && !target.Disarmed;
+            if (canTargetShield)
+            {
+                Console.Write($"  Disarm {target.Name}'s [W]eapon (longsword) or [S]hield? ");
+                string dc = (Console.ReadLine() ?? "w").Trim().ToLower();
+                if (dc.StartsWith("s"))
+                {
+                    target.ShieldLost = true;
+                    Console.WriteLine($"  {target.Name}'s shield is knocked away! They can no longer block.");
+                    if (P.HasFeat("Opportunist")) OpportunistPromptNote();
+                    return;
+                }
+            }
             Console.WriteLine($"  Disarm HIT! {target.Name}'s weapon flies 10 ft away!");
             target.Disarmed = true; target.WeaponDistance = 10;
             if (P.HasFeat("Opportunist")) OpportunistPromptNote();
@@ -1485,6 +1512,7 @@ class CombatSession
     bool EnemyBlocks(Enemy target, int atkRoll)
     {
         if (!target.HasBlock && !target.HasParry) return false;
+        if (target.HasShield && target.ShieldLost) return false;
         if (target.KnockedDown || target.KnockedOut || target.OffBalance) return false;
         int bRoll = Rng.Next(target.BlockMin, target.BlockMax + 1);
         string verb = target.HasParry ? "parries" : "blocks";
@@ -2360,9 +2388,17 @@ class CombatSession
         Console.WriteLine($"  {e.Name} attacks{(e.PowerAttackMode ? " (POWER)" : "")}! Roll {eAtk} vs your dodge {pDdg}.");
         if (eAtk >= pDdg)
         {
-            int dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
-            if (e.PowerAttackMode) dmg += 4; // power attack bonus
-            if (e.Disarmed) dmg = Math.Max(1, dmg / 2);
+            int dmg;
+            if (e.Disarmed && e.UnarmedMinDmg > 0)
+                dmg = Rng.Next(e.UnarmedMinDmg, e.UnarmedMaxDmg + 1);
+            else if (e.Disarmed && e is Ogre ogDisarmed)
+                dmg = Rng.Next(ogDisarmed.OffhandMinDmg, ogDisarmed.OffhandMaxDmg + 1);
+            else
+            {
+                dmg = Rng.Next(e.MinDamage, e.MaxDamage + 1);
+                if (e.PowerAttackMode) dmg += 4;
+                if (e.Disarmed) dmg = Math.Max(1, dmg / 2);
+            }
             if (P.Defending) dmg = Math.Max(1, dmg / 2);
             if (P.ArmorDamageReduction > 0) dmg = Math.Max(1, dmg - P.ArmorDamageReduction);
             Console.WriteLine($"  HIT! You take {dmg} damage. HP: {P.HP - dmg}/{P.MaxHP}");
