@@ -92,7 +92,8 @@ while (true)
         Console.WriteLine("  (Auto-saved after fleeing.)");
     }
 
-    Console.WriteLine("\n[1] Move forward  [2] Rest and recover HP  [3] Go home");
+    Console.WriteLine("\n[1] Move forward  [2] Rest (recover HP + restore Duelist Points)  [3] Go home" +
+        (player.CharacterType == "Archer" ? "  [4] Craft 50 arrows" : ""));
     Console.Write("Choice: ");
     string next = (Console.ReadLine() ?? "1").Trim().ToLower();
 
@@ -110,6 +111,20 @@ while (true)
         recovered = Math.Min(recovered, player.MaxHP - player.HP);
         player.HP += recovered;
         Console.WriteLine($"You rest and recover {recovered} HP. ({player.HP}/{player.MaxHP})");
+        if (player.CharacterType == "Duelist")
+        {
+            int maxPts = player.Level < 2 ? 0 : (player.Level <= 20 ? (player.Level - 2) / 3 + 1 : 7 + 2 * ((player.Level - 20) / 3));
+            player.DuelistPoints = maxPts;
+            Console.WriteLine($"  Duelist Points restored to {maxPts}.");
+        }
+    }
+    if (next is "4" or "craft" or "arrows")
+    {
+        if (player.CharacterType == "Archer")
+        {
+            player.ArrowCount += 50;
+            Console.WriteLine($"  You craft 50 arrows. Total: {player.ArrowCount}.");
+        }
     }
 }
 
@@ -426,9 +441,20 @@ void SelectCharacterType(Player p)
     }
     else if (chosen == "Duelist")
     {
+        p.MaxDamage = 4; // 1-4 unarmed
         p.HeldWeapon = "Rapier Sword";
-        Console.WriteLine("  Starting weapon: Rapier Sword (3-6 dmg)");
-        Console.WriteLine("  Bonus: +1 atk roll every 3 levels from L2; +1 damage die (1-2) every 4 levels from L2");
+        Console.WriteLine("  Starting weapon: Rapier Sword (3-6 dmg)  Unarmed: 1-4");
+        Console.WriteLine("  Bonus: Duelist Points (every 3 levels from L2) for special actions");
+    }
+    else if (chosen == "Archer")
+    {
+        p.MaxDamage = 4; // 1-4 unarmed
+        p.HeldWeapon = "Bow";
+        p.SecondaryWeapon = "Short Sword";
+        p.ArrowCount = 50;
+        Console.WriteLine("  Starting weapon: Bow (50 arrows) + Short Sword backup");
+        Console.WriteLine("  Bow range: 5-14ft=4-12dmg  15-45ft=2-10dmg  46-60ft=1-5dmg  Min 4ft  Max 60ft");
+        Console.WriteLine("  Unarmed: 1-4");
     }
 }
 
@@ -480,6 +506,9 @@ void SaveGame(Player p, int groups)
         $"FeatStacks={string.Join("|", p.FeatStacks.Select(kv => $"{kv.Key}:{kv.Value}"))}",
         $"GearCounts={string.Join("|", p.GearCounts.Select(kv => $"{kv.Key}:{kv.Value}"))}",
         $"KnownSpells={string.Join("|", p.KnownSpells)}",
+        $"DuelistPoints={p.DuelistPoints}",
+        $"ArrowCount={p.ArrowCount}",
+        $"SecondaryWeapon={p.SecondaryWeapon ?? ""}",
         $"GroupsDefeated={groups}",
     };
     File.WriteAllLines(path, lines);
@@ -533,6 +562,9 @@ bool TryLoadGame(Player p, string filePath)
             .Where(a => a.Length == 2 && int.TryParse(a[1], out _))
             .ToDictionary(a => a[0], a => int.Parse(a[1]));
         p.KnownSpells = G("KnownSpells").Split('|', StringSplitOptions.RemoveEmptyEntries).ToList();
+        p.DuelistPoints = I("DuelistPoints");
+        p.ArrowCount = I("ArrowCount");
+        p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
 
         groupsDefeated = I("GroupsDefeated");
         return true;
@@ -666,6 +698,10 @@ class Player
     public int GrappleEscapePrePaid = 0;
     public Enemy? PostGrappleBreakTarget = null;
     public string? HeldWeapon = null;
+    public string? SecondaryWeapon = null;
+    public int ArrowCount = 0;
+    public int DuelistPoints = 0;
+    public Dictionary<string, int> DuelistEffectTurns = new();
     public string CharacterType = "Warrior";
 
     public Player(Random rng)
@@ -739,6 +775,7 @@ abstract class Enemy
     public int UnarmedMinDmg = 0, UnarmedMaxDmg = 0;
     public bool HasShield = false;
     public bool ShieldLost = false;
+    public int ArrowsInBody = 0;
 
     public Enemy(string name, string typeName) { Name = name; TypeName = typeName; }
 
@@ -1529,6 +1566,7 @@ class CombatSession
 
     void DoAttack(Enemy target)
     {
+        if (P.HeldWeapon == "Bow") { DoBowAttack(target); return; }
         // Modifiers
         bool usePower = false, useSunder = false, useDisarm = false, useSap = false;
         var mods = new List<string>();
@@ -1571,18 +1609,14 @@ class CombatSession
         if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
 
         int warriorAtkBonus  = P.CharacterType == "Warrior"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
-        int duelistAtkBonus  = P.CharacterType == "Duelist"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
 
-        // Duelist: extra damage dice every 4 levels from L2 (die = 1 to maxDmg/minDmg)
-        if (P.CharacterType == "Duelist" && P.Level >= 2 && P.HeldWeapon != null)
+        // Duelist Flurry: 3 attacks this action
+        int flurryCount = (P.CharacterType == "Duelist" && P.DuelistEffectTurns.GetValueOrDefault("Duelist Flurry") > 0) ? 3 : 1;
+        for (int fi = 0; fi < flurryCount && target.Alive; fi++)
         {
-            int dUpgrades = (P.Level - 2) / 4 + 1;
-            var (_, _, bMin, bMax) = WeaponPickupStats(P.HeldWeapon);
-            int dieMax = bMin > 0 ? bMax / bMin : 1;
-            for (int di = 0; di < dUpgrades; di++) dmgBonus += Rng.Next(1, dieMax + 1);
+            if (fi > 0) Console.WriteLine($"  [Flurry hit {fi + 1}]");
+            PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus, minDmg, maxDmg, fi == 0 ? dmgBonus : 0, useSunder, useDisarm, fi == 0 && useSap);
         }
-
-        PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus + duelistAtkBonus, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
 
         // Off-hand (Double Tap)
         if (P.HasFeat("Double Tap") && target.Alive)
@@ -1889,6 +1923,7 @@ class CombatSession
         "Troll Axe"      => (2, 12, 3, 12),
         "Bastard Sword"  => (2, 8, 2, 8),
         "Rapier Sword"   => (1, 6, 3, 6),
+        "Short Sword"    => (1, 6, 1, 6),
         _ => (0, 0, 0, 0)
     };
 
@@ -1912,6 +1947,33 @@ class CombatSession
             if (int.TryParse(Console.ReadLine()?.Trim(), out int sc) && sc >= 1 && sc <= P.KnownSpells.Count)
                 DoSpell(P.KnownSpells[sc - 1], alive);
         }
+    }
+
+    void DoBowAttack(Enemy target)
+    {
+        if (P.ArrowCount <= 0) { Console.WriteLine("  Out of arrows!"); return; }
+        float feet = PlayerPos.Feet(target.Position);
+        if (feet < 4f) { Console.WriteLine($"  Too close to use bow! ({feet:F1}ft, min 4ft)"); return; }
+        if (feet > 60f) { Console.WriteLine($"  Too far! ({feet:F1}ft, max 60ft)"); return; }
+        int dmgMin, dmgMax;
+        if (feet <= 14f) { dmgMin = 4; dmgMax = 12; }
+        else if (feet <= 45f) { dmgMin = 2; dmgMax = 10; }
+        else { dmgMin = 1; dmgMax = 5; }
+        int atkRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+        int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        Console.WriteLine($"  BOW ({feet:F0}ft, dmg {dmgMin}-{dmgMax})! Roll {atkRoll} vs {target.Name}'s dodge {ddg}.");
+        P.ArrowCount--;
+        Console.WriteLine($"  Arrows remaining: {P.ArrowCount}");
+        if (atkRoll >= ddg)
+        {
+            int dmg = Rng.Next(dmgMin, dmgMax + 1);
+            dmg = ReduceByToughHide(target, dmg);
+            Console.WriteLine($"  Arrow HIT! {dmg} dmg → {target.Name} HP:{target.HP - dmg}/{target.MaxHP}");
+            target.HP -= dmg;
+            target.ArrowsInBody++;
+            if (!target.Alive) HandleKill(target);
+        }
+        else Console.WriteLine("  Arrow MISS!");
     }
 
     // ── GRAPPLE ───────────────────────────────────────────────────────────
