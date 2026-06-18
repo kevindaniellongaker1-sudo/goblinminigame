@@ -859,6 +859,7 @@ class FeatDef
         new("Chidia Black Belt", "Break weapons/hands with blocks/parries.", "Chidia"),
         new("MMA", "Double min/max damage; +2 attacks and +2 grapples per action.", null),
         new("Bard Song", "Roll 1d6 + stacks vs enemy 2d4; on success, enemies attack each other.", null, true),
+        new("Giant's Strength", "Can pick up and wield Ogre Club (club sweep 2 squares). +2 min damage, +1 max damage on all non-club weapons."),
     };
 }
 
@@ -1386,6 +1387,11 @@ class CombatSession
                     if (!int.TryParse(Console.ReadLine()?.Trim(), out int wpick) || wpick < 1 || wpick > nearby.Count)
                     { Console.WriteLine("  Invalid."); continue; }
                     var picked = nearby[wpick - 1];
+                    if (picked.Type == "Ogre Club" && !P.HasFeat("Giant's Strength"))
+                    {
+                        Console.WriteLine("  The Ogre Club is far too heavy to wield! (Requires Giant's Strength feat)");
+                        continue;
+                    }
                     if (P.HeldWeapon != null)
                     {
                         GroundWeapons.Add((PlayerPos, P.HeldWeapon));
@@ -1430,7 +1436,7 @@ class CombatSession
         bool deadGoblin = Active.Any(e => !e.Alive && e is Goblin);
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
         if (P.HeldWeapon is "Goblin Dagger" or "Troll Axe") o.Add("throw weapon");
-        if (P.HeldWeapon == "Ogre Club") o.Add("club sweep");
+        if (P.HeldWeapon == "Ogre Club" && P.HasFeat("Giant's Strength")) o.Add("club sweep");
         if (GroundWeapons.Any(w => PlayerPos.ManhattanDist(w.Pos) <= 1)) o.Add("pick up weapon");
         return o;
     }
@@ -1490,6 +1496,7 @@ class CombatSession
             maxDmg = P.MaxDamage;
         }
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
+        if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
 
         PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
 
@@ -2428,6 +2435,8 @@ class CombatSession
                     {
                         if (P.IsGrappled && P.GrappledBy == e)
                             OgreMaintainGrapple(e);
+                        else if (!e.DroppedWeapon && !e.Disarmed && Rng.Next(3) == 0)
+                            DoOgreClubSweep(e);
                         else
                             EnemyAttack(e);
                     }
@@ -2447,6 +2456,8 @@ class CombatSession
                 {
                     if (P.IsGrappled && P.GrappledBy == e)
                         OgreMaintainGrapple(e);
+                    else if (!e.DroppedWeapon && !e.Disarmed && Rng.Next(3) == 0)
+                        DoOgreClubSweep(e);
                     else
                         EnemyAttack(e);
                 }
@@ -2530,6 +2541,27 @@ class CombatSession
             }
             else Console.WriteLine("  Still held!");
         }
+    }
+
+    void DoOgreClubSweep(Enemy e)
+    {
+        int dx = PlayerPos.X - e.Position.X;
+        int dy = PlayerPos.Y - e.Position.Y;
+        int sdx, sdy;
+        if (Math.Abs(dx) >= Math.Abs(dy)) { sdx = dx > 0 ? 1 : dx < 0 ? -1 : 0; sdy = 0; }
+        else { sdx = 0; sdy = dy > 0 ? 1 : dy < 0 ? -1 : 0; }
+        Console.WriteLine($"  {e.Name} sweeps the club in a wide arc!");
+        var swSquares = new[] { new GridPos(e.Position.X + sdx, e.Position.Y + sdy),
+                                new GridPos(e.Position.X + sdx * 2, e.Position.Y + sdy * 2) };
+        if (swSquares.Any(sq => sq.SameAs(PlayerPos)))
+        {
+            int swDmg = Rng.Next(3, 13);
+            if (P.Defending) swDmg = Math.Max(1, swDmg / 2);
+            if (P.ArmorDamageReduction > 0) swDmg = Math.Max(1, swDmg - P.ArmorDamageReduction);
+            Console.WriteLine($"  Club sweep hits you for {swDmg}! HP:{P.HP - swDmg}/{P.MaxHP}");
+            P.HP -= swDmg;
+        }
+        else Console.WriteLine("  Club sweep misses!");
     }
 
     void OgreGrappleAction(Enemy e, bool bothHands)
