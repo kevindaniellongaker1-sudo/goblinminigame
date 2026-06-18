@@ -412,9 +412,16 @@ void SelectCharacterType(Player p)
     Console.WriteLine($"  You are a {chosen}!");
     if (chosen == "Mage")
     {
+        p.MaxDamage = 4; // no weapon — 1-4 unarmed
         p.KnownSpells.Add("Air Blade");
         p.KnownSpells.Add("Air Wave");
-        Console.WriteLine("  Starting spells: Air Blade, Air Wave");
+        Console.WriteLine("  Starting spells: Air Blade, Air Wave  (unarmed: 1-4 dmg)");
+    }
+    else if (chosen == "Warrior")
+    {
+        p.HeldWeapon = "Bastard Sword";
+        Console.WriteLine("  Starting weapon: Bastard Sword (2-8 atk, 2-8 dmg)");
+        Console.WriteLine("  Bonus: attack/grapple free actions scale with level; +1 atk roll every 3 levels from L2");
     }
 }
 
@@ -1446,6 +1453,30 @@ class CombatSession
             actLeft--;
         }
 
+        // Warrior bonus attack/grapple actions (every 4 levels from L2)
+        if (P.CharacterType == "Warrior" && !fled && P.HP > 0)
+        {
+            int wBonus = P.Level >= 2 ? (P.Level - 2) / 4 + 1 : 0;
+            var wAlive = alive.Where(e => e.Alive).ToList();
+            for (int wb = 0; wb < wBonus && wAlive.Any() && P.HP > 0; wb++)
+            {
+                Console.Write($"\n  [Warrior Bonus {wb + 1}/{wBonus}] [A]ttack  [G]rapple  [skip]: ");
+                string wc = (Console.ReadLine() ?? "").Trim().ToLower();
+                wAlive = alive.Where(e => e.Alive).ToList();
+                if (!wAlive.Any()) break;
+                if (wc.StartsWith("a"))
+                {
+                    var wt = PickTarget(wAlive);
+                    if (wt != null) DoAttack(wt);
+                }
+                else if (wc.StartsWith("g"))
+                {
+                    var wt = PickTarget(wAlive);
+                    if (wt != null) DoGrapple(wt);
+                }
+            }
+        }
+
         // End of player turn: Opportunist checks
         if (P.HasFeat("Opportunist"))
         {
@@ -1532,7 +1563,8 @@ class CombatSession
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
         if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
 
-        PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
+        int warriorAtkBonus = P.CharacterType == "Warrior" && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
+        PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus, minDmg, maxDmg, dmgBonus, useSunder, useDisarm, useSap);
 
         // Off-hand (Double Tap)
         if (P.HasFeat("Double Tap") && target.Alive)
@@ -1834,9 +1866,10 @@ class CombatSession
 
     (int MinAtk, int MaxAtk, int MinDmg, int MaxDmg) WeaponPickupStats(string w) => w switch
     {
-        "Goblin Dagger" => (1, 6, 1, 6),
-        "Orc Longsword" => (3, 9, 2, 10),
-        "Troll Axe"     => (2, 12, 3, 12),
+        "Goblin Dagger"  => (1, 6, 1, 6),
+        "Orc Longsword"  => (3, 9, 2, 10),
+        "Troll Axe"      => (2, 12, 3, 12),
+        "Bastard Sword"  => (2, 8, 2, 8),
         _ => (0, 0, 0, 0)
     };
 
