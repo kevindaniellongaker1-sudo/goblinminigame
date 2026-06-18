@@ -496,10 +496,10 @@ void SelectCharacterType(Player p)
 
 string GameSaveDir()
 {
-    string docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-    if (string.IsNullOrEmpty(docs) || !Directory.Exists(docs))
-        docs = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-    string dir = Path.Combine(docs, "OWSATH");
+    string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+    if (string.IsNullOrEmpty(desktop) || !Directory.Exists(desktop))
+        desktop = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    string dir = Path.Combine(desktop, "Galaxy Sky");
     Directory.CreateDirectory(dir);
     return dir;
 }
