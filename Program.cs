@@ -1117,6 +1117,16 @@ class CombatSession
 
     bool PlayerTurn()
     {
+        // Expire duelist effects at start of each turn
+        if (P.CharacterType == "Duelist")
+        {
+            foreach (var k in P.DuelistEffectTurns.Keys.ToList())
+            {
+                P.DuelistEffectTurns[k]--;
+                if (P.DuelistEffectTurns[k] <= 0) P.DuelistEffectTurns.Remove(k);
+            }
+        }
+
         int actLeft = 2 + P.AdditionalActions;
         if (P.HasFeat("Chidia")) actLeft += 2;
 
@@ -1489,6 +1499,87 @@ class CombatSession
                     break;
                 }
 
+                case "switch weapon":
+                {
+                    if (P.SecondaryWeapon == null) { Console.WriteLine("  No secondary weapon."); continue; }
+                    string? tmp = P.HeldWeapon;
+                    P.HeldWeapon = P.SecondaryWeapon;
+                    P.SecondaryWeapon = tmp;
+                    Console.WriteLine($"  You switch to {P.HeldWeapon ?? "unarmed"}" +
+                        (P.SecondaryWeapon != null ? $" (stowed: {P.SecondaryWeapon})" : "") + ".");
+                    justBlocked = false;
+                    break;
+                }
+
+                case "duelist action":
+                {
+                    if (P.DuelistPoints <= 0) { Console.WriteLine("  No Duelist Points remaining."); continue; }
+                    // Build list of available specials
+                    var specials = new List<(string name, string desc, int reqLevel)>
+                    {
+                        ("Duelist Defence", "Auto-attack enemies entering/leaving melee range until next turn", 2),
+                        ("Duelist Flurry",  "Three attacks this action (stacks with combos)", 5),
+                        ("Duelist Fencing", "Auto-counter enemies who attack you until next turn", 8),
+                        ("Duelist Fineness","Auto-disarm attackers (roll atk vs atk) until next turn", 11),
+                        ("Duelist Heart",   "Pick 2 other specials for free until next turn", 14),
+                        ("Duelist Stamina", "Pick 1 special lasting 2 turns (no Heart, until L20)", 17),
+                        ("Duelist Game",    "Trip enemies entering/leaving range or attacking until next turn", 20),
+                    };
+                    var available = specials.Where(s => P.Level >= s.reqLevel).ToList();
+                    if (!available.Any()) { Console.WriteLine("  No specials available yet (need L2)."); continue; }
+                    Console.WriteLine($"  Duelist Points: {P.DuelistPoints}  Active effects: {(P.DuelistEffectTurns.Any() ? string.Join(", ", P.DuelistEffectTurns.Select(kv => $"{kv.Key}({kv.Value}t)")) : "none")}");
+                    for (int si = 0; si < available.Count; si++)
+                        Console.WriteLine($"  [{si+1}] {available[si].name} — {available[si].desc}");
+                    Console.Write("  Choose (0=cancel): ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out int sc2) || sc2 < 1 || sc2 > available.Count)
+                    { Console.WriteLine("  Cancelled."); continue; }
+                    var chosen2 = available[sc2 - 1];
+
+                    // Handle Heart (pick 2 others)
+                    if (chosen2.name == "Duelist Heart")
+                    {
+                        P.DuelistPoints--;
+                        var others = available.Where(s => s.name != "Duelist Heart" && s.name != "Duelist Stamina").ToList();
+                        Console.WriteLine($"  [Duelist Heart] Pick 2 specials (free):");
+                        for (int si = 0; si < others.Count; si++) Console.WriteLine($"  [{si+1}] {others[si].name}");
+                        for (int pick = 0; pick < 2; pick++)
+                        {
+                            Console.Write($"  Pick {pick+1}/2: ");
+                            if (int.TryParse(Console.ReadLine()?.Trim(), out int hp) && hp >= 1 && hp <= others.Count)
+                            {
+                                string hName = others[hp - 1].name;
+                                P.DuelistEffectTurns[hName] = Math.Max(P.DuelistEffectTurns.GetValueOrDefault(hName, 0), 1);
+                                Console.WriteLine($"  {hName} active for 1 turn.");
+                            }
+                        }
+                    }
+                    // Handle Stamina (pick 1 other, lasts 2 turns)
+                    else if (chosen2.name == "Duelist Stamina")
+                    {
+                        P.DuelistPoints--;
+                        bool heartAllowed = P.Level >= 20;
+                        var stamOthers = available.Where(s => s.name != "Duelist Stamina" && (heartAllowed || s.name != "Duelist Heart")).ToList();
+                        Console.WriteLine($"  [Duelist Stamina] Pick 1 special (lasts 2 turns):");
+                        for (int si = 0; si < stamOthers.Count; si++) Console.WriteLine($"  [{si+1}] {stamOthers[si].name}");
+                        Console.Write("  Pick: ");
+                        if (int.TryParse(Console.ReadLine()?.Trim(), out int sp) && sp >= 1 && sp <= stamOthers.Count)
+                        {
+                            string sName = stamOthers[sp - 1].name;
+                            P.DuelistEffectTurns[sName] = Math.Max(P.DuelistEffectTurns.GetValueOrDefault(sName, 0), 2);
+                            Console.WriteLine($"  {sName} active for 2 turns.");
+                        }
+                    }
+                    else
+                    {
+                        P.DuelistPoints--;
+                        P.DuelistEffectTurns[chosen2.name] = Math.Max(P.DuelistEffectTurns.GetValueOrDefault(chosen2.name, 0), 1);
+                        Console.WriteLine($"  {chosen2.name} active until next turn.");
+                        // Flurry is consumed immediately on next attack — no extra action needed
+                    }
+                    justBlocked = false;
+                    break;
+                }
+
                 default:
                     Console.WriteLine($"  Unknown action '{chosen}'. Try again.");
                     continue;
@@ -1546,6 +1637,9 @@ class CombatSession
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
         if (P.HeldWeapon is "Goblin Dagger" or "Troll Axe") o.Add("throw weapon");
         if (P.HeldWeapon == "Ogre Club" && P.HasFeat("Giant's Strength")) o.Add("club sweep");
+        int dMaxPts = P.Level < 2 ? 0 : (P.Level <= 20 ? (P.Level-2)/3+1 : 7 + 2*((P.Level-20)/3));
+        if (P.CharacterType == "Duelist" && P.DuelistPoints > 0 && dMaxPts > 0) o.Add("duelist action");
+        if (P.SecondaryWeapon != null) o.Add("switch weapon");
         if (GroundWeapons.Any(w => PlayerPos.ManhattanDist(w.Pos) <= 1)) o.Add("pick up weapon");
         return o;
     }
@@ -1861,6 +1955,16 @@ class CombatSession
                 var t = others.Count == 1 ? others[0] : PickTarget(others);
                 if (t != null) FreeAttack(t);
             }
+        }
+        // Arrow recovery from enemy body
+        if (P.CharacterType == "Archer" && e.ArrowsInBody > 0)
+        {
+            int recovered = 0;
+            for (int ai = 0; ai < e.ArrowsInBody; ai++)
+                if (Rng.Next(4) > 0) recovered++; // 3/4 chance each
+            if (recovered > 0) { P.ArrowCount += recovered; Console.WriteLine($"  Recovered {recovered} arrow(s). Total: {P.ArrowCount}."); }
+            if (recovered < e.ArrowsInBody) Console.WriteLine($"  {e.ArrowsInBody - recovered} arrow(s) broke.");
+            e.ArrowsInBody = 0;
         }
     }
 
@@ -2960,6 +3064,28 @@ class CombatSession
                 if ((Console.ReadLine() ?? "").Trim().ToLower() == "y") DoGrapple(e);
             }
         }
+        // Duelist Fencing: counter-attack after any enemy attack
+        if (P.HP > 0 && P.CharacterType == "Duelist" && P.DuelistEffectTurns.GetValueOrDefault("Duelist Fencing") > 0 && e.Alive)
+        {
+            Console.WriteLine($"  [Duelist Fencing] Counter-attack {e.Name}!");
+            DoAttack(e);
+        }
+        // Duelist Fineness: auto-disarm on attack (whether or not it hit)
+        if (P.HP > 0 && P.CharacterType == "Duelist" && P.DuelistEffectTurns.GetValueOrDefault("Duelist Fineness") > 0 && e.Alive && !e.Disarmed)
+        {
+            int fAtk = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+            int eAtk2 = Rng.Next(e.MinAttack, e.MaxAttack + 1);
+            Console.WriteLine($"  [Duelist Fineness] Disarm attempt: your {fAtk} vs {e.Name}'s {eAtk2}.");
+            if (fAtk >= eAtk2)
+            {
+                var finPos = RandomAdjacent(e.Position);
+                e.Disarmed = true; e.WeaponPos = finPos;
+                string finWpType = EnemyWeaponType(e);
+                if (finWpType.Length > 0) GroundWeapons.Add((finPos, finWpType));
+                Console.WriteLine($"  [Duelist Fineness] Disarmed! Weapon at ({finPos.X},{finPos.Y}).");
+            }
+            else Console.WriteLine("  [Duelist Fineness] Disarm failed.");
+        }
     }
 
     // ── GRID HELPERS ─────────────────────────────────────────────────────
@@ -3009,6 +3135,23 @@ class CombatSession
         if (!suppressCost) actions--;
         if (e.Position.IsCardinalAdjacent(PlayerPos))
             Console.WriteLine($"  {e.Name} closes to melee range!");
+        // Duelist Defence: free attack when enemy enters melee range
+        if (P.CharacterType == "Duelist" && P.DuelistEffectTurns.GetValueOrDefault("Duelist Defence") > 0
+            && e.Position.IsCardinalAdjacent(PlayerPos))
+        {
+            Console.WriteLine($"  [Duelist Defence] {e.Name} entered range — free attack!");
+            DoAttack(e);
+        }
+        // Duelist Game: trip attempt when enemy enters range
+        if (P.CharacterType == "Duelist" && P.DuelistEffectTurns.GetValueOrDefault("Duelist Game") > 0
+            && e.Position.IsCardinalAdjacent(PlayerPos) && e.Alive)
+        {
+            int gAtk = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+            int eDdg = Rng.Next(e.MinDodge, e.MaxDodge + 1);
+            Console.WriteLine($"  [Duelist Game] Trip! Roll {gAtk} vs {e.Name}'s dodge {eDdg}.");
+            if (gAtk >= eDdg) { e.KnockedDown = true; e.OffBalance = true; Console.WriteLine($"  {e.Name} TRIPPED!"); }
+            else Console.WriteLine("  Trip failed.");
+        }
     }
 
     void ShowMap(List<Enemy> alive)
