@@ -179,8 +179,8 @@ List<Enemy> BuildGroup(int waveNum, Random r)
                 case 4: g.Add(new Troll(r, $"Troll Extra A {i + 1}")); g.Add(new Troll(r, $"Troll Extra B {i + 1}")); break;
                 case 5: for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
                 case 6: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Gob Extra {i * 5 + j + 1}")); break;
-                case 7: g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); break;
-                default: g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); break;
+                case 7: if (waveNum >= 51) g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); else for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc Extra {i * 3 + j + 1}")); break;
+                default: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
             }
         }
     }
