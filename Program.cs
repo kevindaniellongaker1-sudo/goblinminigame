@@ -427,16 +427,20 @@ void SelectCharacterType(Player p)
     Console.WriteLine($"  You are a {chosen}!");
     if (chosen == "Mage")
     {
-        p.MaxDamage = 4; // no weapon — 1-4 unarmed
+        p.MaxDamage = 4; // 1-4 unarmed
+        p.HeldWeapon = "Wand";
+        p.SecondaryWeapon = "Staff";
         p.KnownSpells.Add("Air Blade");
         p.KnownSpells.Add("Air Wave");
-        Console.WriteLine("  Starting spells: Air Blade, Air Wave  (unarmed: 1-4 dmg)");
+        Console.WriteLine("  Starting weapons: Wand (3-4 dmg, 20-50ft range) + Staff (2-6 dmg melee)");
+        Console.WriteLine("  Starting spells: Air Blade, Air Wave  Unarmed: 1-4");
     }
     else if (chosen == "Warrior")
     {
         p.MaxDamage = 5; // 1-5 unarmed
-        p.HeldWeapon = "Bastard Sword";
-        Console.WriteLine("  Starting weapon: Bastard Sword (2-8 atk, 2-8 dmg)  Unarmed: 1-5");
+        p.HeldWeapon = "Hand Axe";
+        p.AxeCount = 2;
+        Console.WriteLine("  Starting weapons: 2x Hand Axe (1-6 atk, 2-8 dmg, throwable 20ft)  Unarmed: 1-5");
         Console.WriteLine("  Bonus: attack/grapple free actions scale with level; +1 atk roll every 3 levels from L2");
     }
     else if (chosen == "Duelist")
@@ -510,6 +514,7 @@ void SaveGame(Player p, int groups)
         $"DuelistPoints={p.DuelistPoints}",
         $"ArrowCount={p.ArrowCount}",
         $"DaggerCount={p.DaggerCount}",
+        $"AxeCount={p.AxeCount}",
         $"SecondaryWeapon={p.SecondaryWeapon ?? ""}",
         $"GroupsDefeated={groups}",
     };
@@ -567,6 +572,7 @@ bool TryLoadGame(Player p, string filePath)
         p.DuelistPoints = I("DuelistPoints");
         p.ArrowCount = I("ArrowCount");
         p.DaggerCount = I("DaggerCount");
+        p.AxeCount = I("AxeCount");
         p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
 
         groupsDefeated = I("GroupsDefeated");
@@ -704,6 +710,7 @@ class Player
     public string? SecondaryWeapon = null;
     public int ArrowCount = 0;
     public int DaggerCount = 0;
+    public int AxeCount = 0;
     public int DuelistPoints = 0;
     public Dictionary<string, int> DuelistEffectTurns = new();
     public string CharacterType = "Warrior";
@@ -1481,6 +1488,93 @@ class CombatSession
                     }
                     GroundWeapons.Add((tdLand, "Goblin Dagger"));
                     Console.WriteLine($"  Dagger lands at ({tdLand.X},{tdLand.Y}).");
+                    // Double Tap: second dagger throw
+                    if (P.HasFeat("Double Tap") && P.DaggerCount > 0 && throwTarget.Alive)
+                    {
+                        Console.WriteLine("  [Double Tap] Second dagger throw!");
+                        int tdAtk2 = Rng.Next(1, 7);
+                        int tdDdg2 = Rng.Next(throwTarget.MinDodge, throwTarget.MaxDodge + 1) - throwTarget.DodgePenalty;
+                        Console.WriteLine($"  Throw dagger! ({thrDaggerFeet:F0}ft) Roll {tdAtk2} vs dodge {tdDdg2}. ({P.DaggerCount - 1} daggers left)");
+                        P.DaggerCount--;
+                        GridPos tdLand2;
+                        if (tdAtk2 >= tdDdg2 && !EnemyBlocks(throwTarget, tdAtk2))
+                        {
+                            int tdDmg2 = Rng.Next(1, 7);
+                            tdDmg2 = ReduceByToughHide(throwTarget, tdDmg2);
+                            Console.WriteLine($"  HIT! {tdDmg2} dmg → {throwTarget.Name} HP:{throwTarget.HP - tdDmg2}/{throwTarget.MaxHP}");
+                            throwTarget.HP -= tdDmg2;
+                            if (!throwTarget.Alive) HandleKill(throwTarget);
+                            tdLand2 = RandomAdjacent(throwTarget.Position);
+                        }
+                        else
+                        {
+                            Console.WriteLine("  MISS!");
+                            tdLand2 = RandomAdjacent(throwTarget.Position);
+                        }
+                        GroundWeapons.Add((tdLand2, "Goblin Dagger"));
+                        Console.WriteLine($"  Dagger lands at ({tdLand2.X},{tdLand2.Y}).");
+                    }
+                    justBlocked = false;
+                    break;
+                }
+
+                case "throw axe":
+                {
+                    var throwTarget = PickTarget(alive);
+                    if (throwTarget == null) continue;
+                    float thrAxeFeet = PlayerPos.Feet(throwTarget.Position);
+                    if (thrAxeFeet > 20f)
+                    {
+                        Console.WriteLine("  Too far! Max 20ft for thrown axe.");
+                        continue;
+                    }
+                    int taAtk = Rng.Next(1, 9);
+                    int taDdg = Rng.Next(throwTarget.MinDodge, throwTarget.MaxDodge + 1) - throwTarget.DodgePenalty;
+                    Console.WriteLine($"  Throw axe! ({thrAxeFeet:F0}ft) Roll {taAtk} vs {throwTarget.Name}'s dodge {taDdg}. ({P.AxeCount - 1} axes left)");
+                    P.AxeCount--;
+                    GridPos taLand;
+                    if (taAtk >= taDdg && !EnemyBlocks(throwTarget, taAtk))
+                    {
+                        int taDmg = Rng.Next(2, 9);
+                        taDmg = ReduceByToughHide(throwTarget, taDmg);
+                        Console.WriteLine($"  HIT! {taDmg} dmg → {throwTarget.Name} HP:{throwTarget.HP - taDmg}/{throwTarget.MaxHP}");
+                        throwTarget.HP -= taDmg;
+                        if (!throwTarget.Alive) HandleKill(throwTarget);
+                        taLand = RandomAdjacent(throwTarget.Position);
+                    }
+                    else
+                    {
+                        Console.WriteLine("  MISS!");
+                        taLand = RandomAdjacent(throwTarget.Position);
+                    }
+                    GroundWeapons.Add((taLand, "Hand Axe"));
+                    Console.WriteLine($"  Axe lands at ({taLand.X},{taLand.Y}).");
+                    // Double Tap: second throw
+                    if (P.HasFeat("Double Tap") && P.AxeCount > 0 && throwTarget.Alive)
+                    {
+                        Console.WriteLine("  [Double Tap] Second axe throw!");
+                        int taAtk2 = Rng.Next(1, 9);
+                        int taDdg2 = Rng.Next(throwTarget.MinDodge, throwTarget.MaxDodge + 1) - throwTarget.DodgePenalty;
+                        Console.WriteLine($"  Throw axe! ({thrAxeFeet:F0}ft) Roll {taAtk2} vs dodge {taDdg2}. ({P.AxeCount - 1} axes left)");
+                        P.AxeCount--;
+                        GridPos taLand2;
+                        if (taAtk2 >= taDdg2 && !EnemyBlocks(throwTarget, taAtk2))
+                        {
+                            int taDmg2 = Rng.Next(2, 9);
+                            taDmg2 = ReduceByToughHide(throwTarget, taDmg2);
+                            Console.WriteLine($"  HIT! {taDmg2} dmg → {throwTarget.Name} HP:{throwTarget.HP - taDmg2}/{throwTarget.MaxHP}");
+                            throwTarget.HP -= taDmg2;
+                            if (!throwTarget.Alive) HandleKill(throwTarget);
+                            taLand2 = RandomAdjacent(throwTarget.Position);
+                        }
+                        else
+                        {
+                            Console.WriteLine("  MISS!");
+                            taLand2 = RandomAdjacent(throwTarget.Position);
+                        }
+                        GroundWeapons.Add((taLand2, "Hand Axe"));
+                        Console.WriteLine($"  Axe lands at ({taLand2.X},{taLand2.Y}).");
+                    }
                     justBlocked = false;
                     break;
                 }
@@ -1676,6 +1770,7 @@ class CombatSession
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
         if (P.HeldWeapon is "Goblin Dagger" or "Troll Axe") o.Add("throw weapon");
         if (P.DaggerCount > 0 && !P.IsGrappled) o.Add("throw dagger");
+        if (P.AxeCount > 0 && !P.IsGrappled) o.Add("throw axe");
         if (P.HeldWeapon == "Ogre Club" && P.HasFeat("Giant's Strength")) o.Add("club sweep");
         int dMaxPts = P.Level < 2 ? 0 : (P.Level <= 20 ? (P.Level-2)/3+1 : 7 + 2*((P.Level-20)/3));
         if (P.CharacterType == "Duelist" && P.DuelistPoints > 0 && dMaxPts > 0) o.Add("duelist action");
@@ -1701,6 +1796,7 @@ class CombatSession
     void DoAttack(Enemy target)
     {
         if (P.HeldWeapon == "Bow") { DoBowAttack(target); return; }
+        if (P.HeldWeapon == "Wand") { DoWandAttack(target); return; }
         // Modifiers
         bool usePower = false, useSunder = false, useDisarm = false, useSap = false;
         var mods = new List<string>();
@@ -2068,6 +2164,9 @@ class CombatSession
         "Bastard Sword"  => (2, 8, 2, 8),
         "Rapier Sword"   => (1, 6, 3, 6),
         "Short Sword"    => (1, 6, 1, 6),
+        "Hand Axe"       => (1, 6, 2, 8),
+        "Staff"          => (1, 6, 2, 6),
+        "Wand"           => (1, 6, 3, 4),
         _ => (0, 0, 0, 0)
     };
 
@@ -2118,6 +2217,50 @@ class CombatSession
             if (!target.Alive) HandleKill(target);
         }
         else Console.WriteLine("  Arrow MISS!");
+
+        // Double Tap: second arrow
+        if (P.HasFeat("Double Tap") && P.ArrowCount > 0 && target.Alive)
+        {
+            Console.WriteLine("  [Double Tap] Second arrow!");
+            P.ArrowCount--;
+            Console.WriteLine($"  Arrows remaining: {P.ArrowCount}");
+            int atk2 = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+            int ddg2 = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+            int d2Min, d2Max;
+            if (feet <= 14f) { d2Min = 4; d2Max = 12; }
+            else if (feet <= 45f) { d2Min = 2; d2Max = 10; }
+            else { d2Min = 1; d2Max = 5; }
+            Console.WriteLine($"  BOW ({feet:F0}ft)! Roll {atk2} vs dodge {ddg2}.");
+            if (atk2 >= ddg2)
+            {
+                int dmg2 = Rng.Next(d2Min, d2Max + 1);
+                dmg2 = ReduceByToughHide(target, dmg2);
+                Console.WriteLine($"  Arrow HIT! {dmg2} dmg → {target.Name} HP:{target.HP - dmg2}/{target.MaxHP}");
+                target.HP -= dmg2;
+                target.ArrowsInBody++;
+                if (!target.Alive) HandleKill(target);
+            }
+            else Console.WriteLine("  Arrow MISS!");
+        }
+    }
+
+    void DoWandAttack(Enemy target)
+    {
+        float feet = PlayerPos.Feet(target.Position);
+        if (feet < 20f) { Console.WriteLine($"  Too close for wand! ({feet:F1}ft, min 20ft)"); return; }
+        if (feet > 50f) { Console.WriteLine($"  Too far for wand! ({feet:F1}ft, max 50ft)"); return; }
+        int atkRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+        int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        Console.WriteLine($"  WAND ({feet:F0}ft, dmg 3-4)! Roll {atkRoll} vs {target.Name}'s dodge {ddg}.");
+        if (atkRoll >= ddg)
+        {
+            int dmg = Rng.Next(3, 5);
+            dmg = ReduceByToughHide(target, dmg);
+            Console.WriteLine($"  Wand HIT! {dmg} dmg → {target.Name} HP:{target.HP - dmg}/{target.MaxHP}");
+            target.HP -= dmg;
+            if (!target.Alive) HandleKill(target);
+        }
+        else Console.WriteLine("  Wand MISS!");
     }
 
     // ── GRAPPLE ───────────────────────────────────────────────────────────
