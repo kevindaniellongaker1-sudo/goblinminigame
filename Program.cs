@@ -164,14 +164,15 @@ List<Enemy> BuildGroup(int waveNum, Random r)
     }
     else
     {
-        // Wave 41+: ogres replace trolls one-for-one; each ogre brings companions (1d8)
+        // Wave 41+: ogres replace trolls one-for-one; each ogre brings companions (1d8; 1d10 from wave 61+)
         int ogres = Math.Min(waveNum - 40, 10);
         int trolls = Math.Max(0, 10 - ogres);
         for (int i = 0; i < trolls; i++) g.Add(new Troll(r, $"Troll {i + 1}"));
         for (int i = 0; i < ogres; i++)
         {
             g.Add(new Ogre(r, $"Ogre {i + 1}"));
-            int cr = r.Next(1, 9);
+            int crMax = waveNum >= 61 ? 11 : 9;
+            int cr = r.Next(1, crMax);
             switch (cr)
             {
                 case 1: g.Add(new Ogre(r, $"Ogre Extra {i + 1}")); break;
@@ -180,7 +181,9 @@ List<Enemy> BuildGroup(int waveNum, Random r)
                 case 5: for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
                 case 6: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Gob Extra {i * 5 + j + 1}")); break;
                 case 7: if (waveNum >= 51) g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); else for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc Extra {i * 3 + j + 1}")); break;
-                default: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
+                case 8: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
+                case 9: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i + 1}")); break;
+                default: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 1}")); g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 2}")); break;
             }
         }
     }
@@ -713,6 +716,7 @@ class Player
     public int AxeCount = 0;
     public int DuelistPoints = 0;
     public Dictionary<string, int> DuelistEffectTurns = new();
+    public List<string> BrokenLimbs = new();
     public string CharacterType = "Warrior";
 
     public Player(Random rng)
@@ -785,6 +789,7 @@ abstract class Enemy
     public GridPos? WeaponPos = null;
     public int UnarmedMinDmg = 0, UnarmedMaxDmg = 0;
     public bool HasShield = false;
+    public bool OffhandNonLethal = false;
     public bool ShieldLost = false;
     public int ArrowsInBody = 0;
 
@@ -916,6 +921,27 @@ class Ogre : Enemy
     }
 }
 
+class OrcBarbarian : Enemy
+{
+    public int HandAxeCount = 4;
+    public OrcBarbarian(Random rng, string name) : base(name, "Orc Barbarian")
+    {
+        MaxHP = 35; HP = MaxHP;        // Orc base 25 + 10
+        MinAttack = 3; MaxAttack = 9;
+        MinDamage = 4; MaxDamage = 12; // Battle Axe
+        MinDodge = 2; MaxDodge = 8;
+        MinGrapple = 3; MaxGrapple = 12;
+        GrappleDmgMin = 2; GrappleDmgMax = 8;
+        HasDoubleTap = true;
+        HasBlock = true; BlockMin = 2; BlockMax = 10;
+        UnarmedMinDmg = 1; UnarmedMaxDmg = 6;
+        OffhandMinAtk = 3; OffhandMaxAtk = 9;
+        OffhandMinDmg = 4; OffhandMaxDmg = 14; // War Mace (non-lethal)
+        OffhandNonLethal = true;
+        XPValue = 50;
+    }
+}
+
 class FeatDef
 {
     public string Name, Desc;
@@ -956,6 +982,7 @@ class FeatDef
         new("MMA", "Double min/max damage; +2 attacks and +2 grapples per action.", null),
         new("Bard Song", "Roll 1d6 + stacks vs enemy 2d4; on success, enemies attack each other.", null, true),
         new("Giant's Strength", "Can pick up and wield Ogre Club (club sweep 2 squares). +2 min damage, +1 max damage on all non-club weapons."),
+        new("Giant's Grip", "Wield two-handed weapons as though they are one-handed, allowing dual-wielding of two-handed weapons."),
     };
 }
 
@@ -1838,6 +1865,7 @@ class CombatSession
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
         if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
 
+        int brokenArmPenalty = P.BrokenLimbs.Count(l => l.Contains("Arm"));
         int warriorAtkBonus  = P.CharacterType == "Warrior"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
 
         // Duelist Flurry: 3 attacks this action
@@ -1845,7 +1873,7 @@ class CombatSession
         for (int fi = 0; fi < flurryCount && target.Alive; fi++)
         {
             if (fi > 0) Console.WriteLine($"  [Flurry hit {fi + 1}]");
-            PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus, minDmg, maxDmg, fi == 0 ? dmgBonus : 0, useSunder, useDisarm, fi == 0 && useSap);
+            PerformAttack(target, Rng.Next(minAtk, maxAtk + 1) + atkPen + warriorAtkBonus - brokenArmPenalty, minDmg, maxDmg, fi == 0 ? dmgBonus : 0, useSunder, useDisarm, fi == 0 && useSap);
         }
 
         // Off-hand (Double Tap)
@@ -2165,6 +2193,8 @@ class CombatSession
         "Rapier Sword"   => (1, 6, 3, 6),
         "Short Sword"    => (1, 6, 1, 6),
         "Hand Axe"       => (1, 6, 2, 8),
+        "Battle Axe"     => (3, 9, 4, 12),
+        "War Mace"       => (3, 9, 4, 14),
         "Staff"          => (1, 6, 2, 6),
         "Wand"           => (1, 6, 3, 4),
         _ => (0, 0, 0, 0)
@@ -3200,7 +3230,8 @@ class CombatSession
         if (!e.Position.IsCardinalAdjacent(PlayerPos)) return; // out of melee range
         int eAtk = Rng.Next(e.MinAttack, e.MaxAttack + 1) - e.AttackPenalty - e.FrostPenalty;
         if (e.PowerAttackMode) eAtk = Math.Max(1, eAtk - 2); // power attack penalty
-        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1) - P.FrostPenalty;
+        int brokenLegPenalty = P.BrokenLimbs.Count(l => l.Contains("Leg"));
+        int pDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1) - P.FrostPenalty - brokenLegPenalty;
         Console.WriteLine($"  {e.Name} attacks{(e.PowerAttackMode ? " (POWER)" : "")}! Roll {eAtk} vs your dodge {pDdg}.");
         if (eAtk >= pDdg)
         {
@@ -3224,7 +3255,8 @@ class CombatSession
             {
                 int ofAtk = Rng.Next(e.OffhandMinAtk, e.OffhandMaxAtk + 1) - e.AttackPenalty;
                 int ofDdg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
-                Console.WriteLine($"  {e.Name} off-hand! Roll {ofAtk} vs your dodge {ofDdg}.");
+                string offhandLabel = e.OffhandNonLethal ? "War Mace (non-lethal)" : "off-hand";
+                Console.WriteLine($"  {e.Name} {offhandLabel}! Roll {ofAtk} vs your dodge {ofDdg}.");
                 if (ofAtk >= ofDdg)
                 {
                     int ofDmg = Rng.Next(e.OffhandMinDmg, e.OffhandMaxDmg + 1);
@@ -3232,6 +3264,13 @@ class CombatSession
                     if (P.ArmorDamageReduction > 0) ofDmg = Math.Max(1, ofDmg - P.ArmorDamageReduction);
                     Console.WriteLine($"  Off-hand HIT! {ofDmg} damage. HP:{P.HP - ofDmg}/{P.MaxHP}");
                     P.HP -= ofDmg;
+                    if (e.OffhandNonLethal && ofDmg >= e.OffhandMaxDmg)
+                    {
+                        string[] limbs = { "Left Arm", "Right Arm", "Left Leg", "Right Leg" };
+                        string brokenLimb = limbs[Rng.Next(4)];
+                        P.BrokenLimbs.Add(brokenLimb);
+                        Console.WriteLine($"  WAR MACE MAX! Your {brokenLimb} is BROKEN! (-1 atk per broken arm, -1 dodge per broken leg)");
+                    }
                 }
                 else Console.WriteLine("  Off-hand miss!");
             }
