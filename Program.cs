@@ -385,6 +385,37 @@ void AskName(Player p)
     Console.Write("\nEnter your name (or Enter for 'The Lone Warrior'): ");
     string input = (Console.ReadLine() ?? "").Trim();
     if (!string.IsNullOrEmpty(input)) p.Name = input;
+    SelectCharacterType(p);
+}
+
+void SelectCharacterType(Player p)
+{
+    var types = new[] { "Mage", "Priest", "Warrior", "Duelist", "Archer", "Martial Artist" };
+    Console.WriteLine("\nChoose your character type:");
+    Console.WriteLine("  [1] Mage           — Air Blade (ranged slashing) + Air Wave (knockback)");
+    Console.WriteLine("  [2] Priest         — (coming soon)");
+    Console.WriteLine("  [3] Warrior        — (coming soon)");
+    Console.WriteLine("  [4] Duelist        — (coming soon)");
+    Console.WriteLine("  [5] Archer         — (coming soon)");
+    Console.WriteLine("  [6] Martial Artist — (coming soon)");
+    Console.Write("  Choice (1-6 or name): ");
+    string raw = (Console.ReadLine() ?? "").Trim();
+    string chosen = "Warrior";
+    if (int.TryParse(raw, out int cidx) && cidx >= 1 && cidx <= types.Length)
+        chosen = types[cidx - 1];
+    else
+    {
+        var match = types.FirstOrDefault(t => t.StartsWith(raw, StringComparison.OrdinalIgnoreCase));
+        if (match != null) chosen = match;
+    }
+    p.CharacterType = chosen;
+    Console.WriteLine($"  You are a {chosen}!");
+    if (chosen == "Mage")
+    {
+        p.KnownSpells.Add("Air Blade");
+        p.KnownSpells.Add("Air Wave");
+        Console.WriteLine("  Starting spells: Air Blade, Air Wave");
+    }
 }
 
 string GameSaveDir()
@@ -410,6 +441,7 @@ void SaveGame(Player p, int groups)
     var lines = new List<string>
     {
         $"Name={p.Name}",
+        $"CharacterType={p.CharacterType}",
         $"HP={p.HP}", $"MaxHP={p.MaxHP}",
         $"MinAttack={p.MinAttack}", $"MaxAttack={p.MaxAttack}",
         $"MinDamage={p.MinDamage}", $"MaxDamage={p.MaxDamage}",
@@ -455,6 +487,7 @@ bool TryLoadGame(Player p, string filePath)
         bool B(string k) => G(k) == "True";
 
         p.Name = G("Name");
+        p.CharacterType = G("CharacterType") is { Length: > 0 } ct ? ct : "Warrior";
         p.HP = I("HP"); p.MaxHP = I("MaxHP");
         p.MinAttack = I("MinAttack"); p.MaxAttack = I("MaxAttack");
         p.MinDamage = I("MinDamage"); p.MaxDamage = I("MaxDamage");
@@ -619,6 +652,7 @@ class Player
     public int GrappleEscapePrePaid = 0;
     public Enemy? PostGrappleBreakTarget = null;
     public string? HeldWeapon = null;
+    public string CharacterType = "Warrior";
 
     public Player(Random rng)
     {
@@ -2026,6 +2060,67 @@ class CombatSession
                     e.FrostPenalty = Math.Max(e.FrostPenalty, eFrostPen);
                     e.FrostTurns = Math.Max(e.FrostTurns, frostTurns);
                     Console.WriteLine($"    {e.Name} FROZEN! (-{eFrostPen} on rolls for {frostTurns} turns)");
+                }
+                break;
+            }
+            case "Air Blade":
+            {
+                int upgrades = P.Level >= 2 ? (P.Level - 2) / 4 + 1 : 0;
+                float maxRange = 30f + upgrades * 5f;
+                var inRange = alive.Where(e => PlayerPos.Feet(e.Position) <= maxRange).ToList();
+                if (!inRange.Any())
+                {
+                    Console.WriteLine($"  No enemies within Air Blade range ({maxRange:F0}ft).");
+                    break;
+                }
+                Console.WriteLine($"  Air Blade range: {maxRange:F0}ft{(upgrades > 0 ? $"  (+{upgrades}d6 bonus dmg)" : "")}");
+                var abTarget = PickTarget(inRange);
+                if (abTarget == null) break;
+                float abFeet = PlayerPos.Feet(abTarget.Position);
+                int abDmg = Rng.Next(2, 7);
+                for (int ui = 0; ui < upgrades; ui++) abDmg += Rng.Next(1, 7);
+                if (abTarget.MagicResistant) { abDmg = Math.Max(1, abDmg / 2); Console.WriteLine("    (Magic resistant!)"); }
+                else if (abTarget.MagicVulnerable) { abDmg = (int)(abDmg * 1.5); Console.WriteLine("    (Magic vulnerable! ×1.5)"); }
+                abTarget.HP -= abDmg; abTarget.HitBySpell = true;
+                Console.WriteLine($"  AIR BLADE! ({abFeet:F0}ft) {abTarget.Name} struck for {abDmg} slashing damage! HP:{abTarget.HP}/{abTarget.MaxHP}");
+                if (!abTarget.Alive) HandleKill(abTarget);
+                break;
+            }
+            case "Air Wave":
+            {
+                const float waveRange = 20f; // 8 squares — nearby enemies
+                var waveTargets = alive.Where(e => PlayerPos.Feet(e.Position) <= waveRange).ToList();
+                Console.WriteLine($"  AIR WAVE! Pushing enemies within {waveRange:F0}ft ({waveTargets.Count} in range).");
+                if (!waveTargets.Any()) { Console.WriteLine("  No enemies nearby!"); break; }
+                foreach (var e in waveTargets)
+                {
+                    int wRoll = Rng.Next(1, 7);
+                    float wFeet = PlayerPos.Feet(e.Position);
+                    Console.Write($"  {e.Name} ({wFeet:F0}ft) — roll {wRoll}: ");
+                    if (wRoll == 1)
+                    {
+                        Console.WriteLine("resists the wave!");
+                        continue;
+                    }
+                    // Push direction: away from player
+                    int pdx = e.Position.X - PlayerPos.X;
+                    int pdy = e.Position.Y - PlayerPos.Y;
+                    int sdx, sdy;
+                    if (pdx == 0 && pdy == 0) { sdx = 0; sdy = -1; }
+                    else if (Math.Abs(pdx) >= Math.Abs(pdy)) { sdx = pdx > 0 ? 1 : -1; sdy = 0; }
+                    else { sdx = 0; sdy = pdy > 0 ? 1 : -1; }
+                    e.Position = new GridPos(
+                        Math.Clamp(e.Position.X + sdx * 4, 0, 49),
+                        Math.Clamp(e.Position.Y + sdy * 4, 0, 49));
+                    if (wRoll >= 5)
+                    {
+                        e.KnockedDown = true; e.OffBalance = true;
+                        Console.WriteLine($"knocked off feet + pushed! ({e.Position.X},{e.Position.Y})");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"pushed back 10ft. ({e.Position.X},{e.Position.Y})");
+                    }
                 }
                 break;
             }
