@@ -150,40 +150,62 @@ while (true)
         Console.WriteLine("  (Auto-saved after fleeing.)");
     }
 
-    Console.WriteLine("\n[1] Move forward  [2] Rest (recover HP + restore Duelist Points)  [3] Go home" +
-        (player.CharacterType == "Archer" ? "  [4] Craft 50 arrows" : ""));
-    Console.Write("Choice: ");
-    string next = (Console.ReadLine() ?? "1").Trim().ToLower();
+    // Post-combat: Priest level 20+ in party auto-revives all fallen members
+    var priest20 = allPlayers.FirstOrDefault(pl => pl.CharacterType == "Priest" && pl.Level >= 20);
+    var deadPlayers = allPlayers.Where(pl => pl.HP <= 0).ToList();
+    if (priest20 != null && deadPlayers.Any())
+    {
+        Console.WriteLine($"\n{priest20.Name} calls upon divine grace — the fallen rise!");
+        foreach (var dp in deadPlayers) { dp.HP = 1; Console.WriteLine($"  {dp.Name} revived at 1 HP."); }
+    }
+    else
+    {
+        foreach (var dp in deadPlayers)
+        {
+            Console.WriteLine($"  {dp.Name} has died and cannot continue.");
+            allPlayers.Remove(dp);
+        }
+    }
+    if (!allPlayers.Any()) break;
+    player = allPlayers[0];
 
-    if (next is "3" or "home" or "quit" or "q" or "go home")
+    // Each player decides: move forward, rest, go home, or craft arrows
+    var goingHome = new List<Player>();
+    foreach (var pl in allPlayers.ToList())
     {
-        Console.WriteLine($"\nYou return home! Groups defeated: {groupsDefeated}  Level: {player.Level}. Well done!");
-        foreach (var pl in allPlayers) SaveGame(pl, groupsDefeated);
-        break;
-    }
-    if (next is "2" or "rest" or "heal")
-    {
-        int dice = 1 + player.GetFeatStacks("Potion Brewer");
-        int recovered = 0;
-        for (int d = 0; d < dice; d++) recovered += rng.Next(player.MinPotionHeal, player.MaxPotionHeal + 1);
-        recovered = Math.Min(recovered, player.MaxHP - player.HP);
-        player.HP += recovered;
-        Console.WriteLine($"You rest and recover {recovered} HP. ({player.HP}/{player.MaxHP})");
-        if (player.CharacterType == "Duelist")
+        Console.WriteLine($"\n{pl.Name} ({pl.CharacterType}, HP {pl.HP}/{pl.MaxHP}, Lv {pl.Level}):");
+        Console.WriteLine("  [1] Move forward  [2] Rest  [3] Go home" + (pl.CharacterType == "Archer" ? "  [4] Craft arrows" : ""));
+        Console.Write("  Choice: ");
+        string next = (Console.ReadLine() ?? "1").Trim().ToLower();
+        if (next is "3" or "home" or "quit" or "q" or "go home")
         {
-            int maxPts = player.Level < 2 ? 0 : (player.Level <= 20 ? (player.Level - 2) / 3 + 1 : 7 + 2 * ((player.Level - 20) / 3));
-            player.DuelistPoints = maxPts;
-            Console.WriteLine($"  Duelist Points restored to {maxPts}.");
+            Console.WriteLine($"  {pl.Name} heads home. Well done!");
+            SaveGame(pl, groupsDefeated);
+            goingHome.Add(pl);
+        }
+        else if (next is "2" or "rest" or "heal")
+        {
+            int dice = 1 + pl.GetFeatStacks("Potion Brewer");
+            int recovered = 0;
+            for (int d = 0; d < dice; d++) recovered += rng.Next(pl.MinPotionHeal, pl.MaxPotionHeal + 1);
+            recovered = Math.Min(recovered, pl.MaxHP - pl.HP);
+            pl.HP += recovered;
+            Console.WriteLine($"  {pl.Name} rests and recovers {recovered} HP. ({pl.HP}/{pl.MaxHP})");
+            if (pl.CharacterType == "Duelist")
+            {
+                int maxPts = pl.Level < 2 ? 0 : (pl.Level <= 20 ? (pl.Level - 2) / 3 + 1 : 7 + 2 * ((pl.Level - 20) / 3));
+                pl.DuelistPoints = maxPts;
+                Console.WriteLine($"  Duelist Points restored to {maxPts}.");
+            }
+        }
+        else if (next is "4" or "craft" or "arrows")
+        {
+            if (pl.CharacterType == "Archer") { pl.ArrowCount += 50; Console.WriteLine($"  {pl.Name} crafts 50 arrows. Total: {pl.ArrowCount}."); }
         }
     }
-    if (next is "4" or "craft" or "arrows")
-    {
-        if (player.CharacterType == "Archer")
-        {
-            player.ArrowCount += 50;
-            Console.WriteLine($"  You craft 50 arrows. Total: {player.ArrowCount}.");
-        }
-    }
+    foreach (var pl in goingHome) allPlayers.Remove(pl);
+    if (!allPlayers.Any()) break;
+    player = allPlayers[0];
 }
 
 Console.WriteLine("\nThanks for playing!");
@@ -1186,8 +1208,10 @@ struct GridPos
 
 class CombatSession
 {
-    readonly Player P;
-    readonly IReadOnlyList<Player> AllPlayers;
+    Player P;
+    readonly List<Player> AllPlayers;
+    List<Player> ActivePlayers;
+    public List<Player> FledPlayers = new();
     readonly Random Rng;
     readonly Func<int, int> XpThreshold;
     readonly Action<int> GainXP;
@@ -1199,9 +1223,10 @@ class CombatSession
     SharedGameState? _displayState;
     int _waveNum;
 
-    public CombatSession(Player p, IReadOnlyList<Player> allPlayers, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart, SharedGameState? displayState = null, int waveNum = 0)
+    public CombatSession(Player p, List<Player> allPlayers, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart, SharedGameState? displayState = null, int waveNum = 0)
     {
-        P = p; AllPlayers = allPlayers; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
+        P = p; AllPlayers = allPlayers; ActivePlayers = allPlayers.ToList();
+        Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
         PlayerPos = playerStart;
         _displayState = displayState;
         _waveNum = waveNum;
@@ -1226,7 +1251,7 @@ class CombatSession
     public bool Run()
     {
         int turnNum = 0;
-        while (P.HP > 0)
+        while (ActivePlayers.Any(p => p.HP > 0 || p.IsRaging))
         {
             var alive = Active.Where(e => e.Alive).ToList();
             if (!alive.Any() && !Pending.Any()) break;
@@ -1235,19 +1260,21 @@ class CombatSession
             PushDisplay();
             Console.WriteLine($"\n━━━━ Turn {turnNum} ━━━━");
 
-            // Player burning
-            if (P.BurningDmg > 0)
+            // Burning / frost on all active players
+            foreach (var ap in ActivePlayers.ToList())
             {
-                P.HP -= P.BurningDmg;
-                Console.WriteLine($"  You are BURNING! {P.BurningDmg} damage. HP:{P.HP}/{P.MaxHP}");
-                P.BurningTurns--;
-                if (P.BurningTurns <= 0) { P.BurningDmg = 0; Console.WriteLine("  Your flames die out."); }
-            }
-            // Player frost countdown
-            if (P.FrostTurns > 0)
-            {
-                P.FrostTurns--;
-                if (P.FrostTurns <= 0) { P.FrostPenalty = 0; Console.WriteLine("  The frost clears from your limbs."); }
+                if (ap.BurningDmg > 0)
+                {
+                    ap.HP -= ap.BurningDmg;
+                    Console.WriteLine($"  {ap.Name} is BURNING! {ap.BurningDmg} damage. HP:{ap.HP}/{ap.MaxHP}");
+                    ap.BurningTurns--;
+                    if (ap.BurningTurns <= 0) { ap.BurningDmg = 0; Console.WriteLine($"  {ap.Name}'s flames die out."); }
+                }
+                if (ap.FrostTurns > 0)
+                {
+                    ap.FrostTurns--;
+                    if (ap.FrostTurns <= 0) { ap.FrostPenalty = 0; Console.WriteLine($"  The frost clears from {ap.Name}'s limbs."); }
+                }
             }
 
             // Arrive reinforcements
@@ -1323,40 +1350,64 @@ class CombatSession
             // Snapshot HP so consecutive-damage tracking works after player acts
             foreach (var e in Active.Where(x => x.Alive)) e.HpAtTurnStart = e.HP;
 
-            bool fled = PlayerTurn();
-            if (fled) { PlayerFled = true; Console.WriteLine("You escaped!"); return true; }
-            // Tick rage down; rage end heals and restores survivability
-            if (P.IsRaging)
+            // Each active player takes their turn in order
+            foreach (var ap in ActivePlayers.ToList())
             {
-                P.RageTurnsLeft--;
-                if (P.RageTurnsLeft <= 0)
+                if (ap.HP <= 0 && !ap.IsRaging) continue;
+                P = ap;
+                alive = Active.Where(e => e.Alive).ToList();
+                if (!alive.Any() && !Pending.Any()) break;
+                if (AllPlayers.Count > 1) Console.WriteLine($"\n── {ap.Name}'s turn ──");
+                bool fled = PlayerTurn();
+                if (fled)
                 {
-                    P.IsRaging = false;
-                    int healDice = P.RagePointsSpent;
-                    P.RagePointsSpent = 0;
-                    int rageHeal = 0;
-                    for (int rd = 0; rd < healDice; rd++) rageHeal += Rng.Next(1, 5);
-                    P.HP = Math.Clamp(P.HP + rageHeal, 0, P.MaxHP);
-                    Console.WriteLine($"  Rage fades! Recovered {rageHeal} HP ({healDice}d4). ({P.HP}/{P.MaxHP})");
-                    // Recalculate rage points (may have gained a level)
-                    int maxRage = 1 + (P.Level >= 2 ? (P.Level - 2) / 4 + 1 : 0);
-                    if (P.RagePoints < maxRage) P.RagePoints = Math.Min(P.RagePoints + 1, maxRage);
+                    Console.WriteLine($"  {ap.Name} escaped!");
+                    FledPlayers.Add(ap);
+                    ActivePlayers.Remove(ap);
+                    AllPlayers.Remove(ap);
+                    if (AllPlayers.Count == 0) { PlayerFled = true; return true; }
+                }
+                // Rage tick
+                if (ap.IsRaging)
+                {
+                    ap.RageTurnsLeft--;
+                    if (ap.RageTurnsLeft <= 0)
+                    {
+                        ap.IsRaging = false;
+                        int healDice = ap.RagePointsSpent;
+                        ap.RagePointsSpent = 0;
+                        int rageHeal = 0;
+                        for (int rd = 0; rd < healDice; rd++) rageHeal += Rng.Next(1, 5);
+                        ap.HP = Math.Clamp(ap.HP + rageHeal, 0, ap.MaxHP);
+                        Console.WriteLine($"  Rage fades! {ap.Name} recovered {rageHeal} HP ({healDice}d4). ({ap.HP}/{ap.MaxHP})");
+                        int maxRage = 1 + (ap.Level >= 2 ? (ap.Level - 2) / 4 + 1 : 0);
+                        if (ap.RagePoints < maxRage) ap.RagePoints = Math.Min(ap.RagePoints + 1, maxRage);
+                    }
+                }
+                // Remove player from active turn order if dead
+                if (ap.HP <= 0 && !ap.IsRaging)
+                {
+                    Console.WriteLine($"  {ap.Name} has fallen!");
+                    ActivePlayers.Remove(ap);
                 }
             }
-            if (P.HP <= 0 && !P.IsRaging) break;
+
+            if (!ActivePlayers.Any()) break; // all players dead or fled
 
             alive = Active.Where(e => e.Alive).ToList();
             if (!alive.Any() && !Pending.Any()) break;
 
-            // All alive enemies KO'd (and no reinforcements coming) → player wins
+            // All alive enemies KO'd (and no reinforcements coming) → party wins
             if (!Pending.Any() && alive.Any() && alive.All(e => e.KnockedOut))
             {
                 Console.WriteLine("\nAll enemies are knocked out! You stand victorious.");
                 return true;
             }
 
+            // Enemies target the first alive active player
+            P = ActivePlayers.First(p => p.HP > 0);
             EnemyTurn();
-            P.ClearRoundEffects();
+            foreach (var ap in ActivePlayers) ap.ClearRoundEffects();
 
             foreach (var e in Active.Where(e => e.Alive)) e.EndOfRound();
 
@@ -1368,7 +1419,7 @@ class CombatSession
                 return true;
             }
         }
-        return P.HP > 0;
+        return AllPlayers.Any(p => p.HP > 0);
     }
 
     // ── PLAYER TURN ──────────────────────────────────────────────────────
@@ -1733,6 +1784,7 @@ class CombatSession
                     Console.WriteLine($"  [1] Prayer of Healing  — heal {healDice}d6 (range 25ft, self or ally)");
                     Console.WriteLine($"  [2] Forgiveness        — convert enemy ≤{forgThresh}% HP; roll {forgDice}d4 vs HP{(forgAoe > 0 ? $"; AoE {forgAoe}ft" : "")} (range 30ft)");
                     Console.WriteLine($"  [3] Lord's Prayer      — {lordMult}d6{(lordD4s > 0 ? $"+{lordD4s}d4" : "")} dmg to all enemies within 6ft");
+                    if (L >= 20) Console.WriteLine($"  [4] Last Rites         — revive a fallen party member (1d6 HP)");
                     Console.Write("  Choose prayer: ");
                     string pc = (Console.ReadLine() ?? "").Trim();
 
@@ -1813,6 +1865,26 @@ class CombatSession
                             lt.HP -= dmg;
                             if (!lt.Alive) HandleKill(lt);
                         }
+                    }
+                    else if (pc == "4" && L >= 20) // ── Last Rites ────────────
+                    {
+                        var fallen = AllPlayers.Where(pl => pl != P && pl.HP <= 0).ToList();
+                        if (!fallen.Any()) { Console.WriteLine("  No fallen party members nearby."); continue; }
+                        Player? reviveTarget;
+                        if (fallen.Count == 1) { reviveTarget = fallen[0]; }
+                        else
+                        {
+                            for (int ri = 0; ri < fallen.Count; ri++)
+                                Console.WriteLine($"  [{ri+1}] {fallen[ri].Name}");
+                            Console.Write("  Revive whom? ");
+                            reviveTarget = int.TryParse((Console.ReadLine() ?? "").Trim(), out int ri2) && ri2 >= 1 && ri2 <= fallen.Count
+                                ? fallen[ri2 - 1] : null;
+                        }
+                        if (reviveTarget == null) { Console.WriteLine("  No one revived."); continue; }
+                        int reviveHp = Rng.Next(1, 7);
+                        reviveTarget.HP = reviveHp;
+                        if (!ActivePlayers.Contains(reviveTarget)) ActivePlayers.Add(reviveTarget);
+                        Console.WriteLine($"  Last Rites! {reviveTarget.Name} rises with {reviveHp} HP!");
                     }
                     else { Console.WriteLine("  No prayer chosen."); continue; }
                     justBlocked = false;
