@@ -438,12 +438,12 @@ void SelectCharacterType(Player p)
 {
     var types = new[] { "Mage", "Priest", "Warrior", "Duelist", "Archer", "Martial Artist" };
     Console.WriteLine("\nChoose your character type:");
-    Console.WriteLine("  [1] Mage           — Air Blade (ranged slashing) + Air Wave (knockback)");
-    Console.WriteLine("  [2] Priest         — (coming soon)");
-    Console.WriteLine("  [3] Warrior        — (coming soon)");
-    Console.WriteLine("  [4] Duelist        — (coming soon)");
-    Console.WriteLine("  [5] Archer         — (coming soon)");
-    Console.WriteLine("  [6] Martial Artist — (coming soon)");
+    Console.WriteLine("  [1] Mage           — Wand + Staff; Air Blade (ranged) + Air Wave (knockback)");
+    Console.WriteLine("  [2] Priest         — Prayers: Healing, Forgiveness, Lord's Prayer");
+    Console.WriteLine("  [3] Warrior        — 2x Hand Axe; bonus actions + atk bonus scale with level");
+    Console.WriteLine("  [4] Duelist        — Rapier + daggers; Duelist Points & special actions");
+    Console.WriteLine("  [5] Archer         — Bow + 50 arrows + Short Sword backup");
+    Console.WriteLine("  [6] Martial Artist — Pick a martial art; 2d4 unarmed scaling + grapple/throw");
     Console.Write("  Choice (1-6 or name): ");
     string raw = (Console.ReadLine() ?? "").Trim();
     string chosen = "Warrior";
@@ -498,6 +498,24 @@ void SelectCharacterType(Player p)
         Console.WriteLine("  Starting: unarmed (1-4 dmg)");
         Console.WriteLine("  Prayers: Prayer of Healing (25ft heal), Forgiveness (30ft convert), Lord's Prayer (6ft AoE dmg)");
         Console.WriteLine("  All prayers scale every 3 levels from L2; Forgiveness also gains AoE/threshold every 4 levels from L2");
+    }
+    else if (chosen == "Martial Artist")
+    {
+        p.MinDamage = 2; p.MaxDamage = 8; // unarmed 2d4
+        var arts = new[] { "Kehon", "Judo", "Taekwondo", "Chidia" };
+        Console.WriteLine("\n  Pick your martial art:");
+        Console.WriteLine("  [1] Kehon      — enemy enters/leaves range, KO, disarmed, or off-balance: instant free grapple");
+        Console.WriteLine("  [2] Judo       — on dodge/block/parry/enemy miss: free grapple (hold/throw/disarm)");
+        Console.WriteLine("  [3] Taekwondo  — break limbs of grappled enemies (double damage, effects by limb)");
+        Console.WriteLine("  [4] Chidia     — unarmed: +2 actions/turn; all attacks non-lethal (KO)");
+        Console.Write("  Choice (1-4 or name): ");
+        string araw = (Console.ReadLine() ?? "").Trim();
+        string art = "Kehon";
+        if (int.TryParse(araw, out int aidx) && aidx >= 1 && aidx <= arts.Length) art = arts[aidx - 1];
+        else { var am = arts.FirstOrDefault(a => a.StartsWith(araw, StringComparison.OrdinalIgnoreCase)); if (am != null) art = am; }
+        p.AddFeat(art);
+        Console.WriteLine($"  Martial art: {art}!  Unarmed: 2d4 (×1 more every 3 levels past L2)");
+        Console.WriteLine("  Bonus: +1d4 grapple dmg every 4 levels from L2; bonus melee/throw action every 3 levels from L2");
     }
 }
 
@@ -1909,6 +1927,45 @@ class CombatSession
             }
         }
 
+        // Martial Artist bonus melee/throw actions (every 3 levels from L2)
+        if (P.CharacterType == "Martial Artist" && !fled && P.HP > 0)
+        {
+            int maBonus = P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
+            var maAlive = Active.Where(e => e.Alive).ToList();
+            for (int mb = 0; mb < maBonus && maAlive.Any() && P.HP > 0; mb++)
+            {
+                Console.Write($"\n  [Martial Artist Bonus {mb + 1}/{maBonus}] [M]elee  [T]hrow  [skip]: ");
+                string mc = (Console.ReadLine() ?? "").Trim().ToLower();
+                maAlive = Active.Where(e => e.Alive).ToList();
+                if (!maAlive.Any()) break;
+                if (mc.StartsWith("m"))
+                {
+                    var mt = PickTarget(maAlive);
+                    if (mt != null) DoAttack(mt);
+                }
+                else if (mc.StartsWith("t"))
+                {
+                    var mt = PickTarget(maAlive);
+                    if (mt == null) continue;
+                    int gst = GrappleStyleTier();
+                    int gRoll = Rng.Next(P.MinGrapple + P.GetFeatStacks("Closeliner") + (gst >= 2 ? 1 : 0),
+                                         P.MaxGrapple + (gst >= 3 ? 2 : 0) + 1);
+                    int dRoll = Rng.Next(mt.MinDodge, mt.MaxDodge + 1);
+                    Console.WriteLine($"  Throw! Roll {gRoll} vs {mt.Name}'s dodge {dRoll}.");
+                    if (gRoll >= dRoll)
+                    {
+                        mt.KnockedDown = true; mt.OffBalance = true;
+                        int throwDmg = Rng.Next(P.MinGrappleDmg + P.GetFeatStacks("Closeliner"), P.MaxGrappleDmg + 1);
+                        throwDmg = ReduceByToughHide(mt, throwDmg);
+                        mt.HP -= throwDmg;
+                        Console.WriteLine($"  {mt.Name} is slammed to the ground for {throwDmg}! HP:{mt.HP}/{mt.MaxHP}");
+                        if (!mt.Alive) HandleKill(mt);
+                    }
+                    else Console.WriteLine("  Throw failed!");
+                }
+            }
+        }
+
         // End of player turn: Opportunist checks
         if (P.HasFeat("Opportunist"))
         {
@@ -2002,6 +2059,12 @@ class CombatSession
         }
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
         if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
+        // Martial Artist unarmed: 2d4 multiplied — +1 set every 3 levels past L2
+        if (P.CharacterType == "Martial Artist" && P.HeldWeapon == null)
+        {
+            int maMult = 1 + (P.Level >= 2 ? (P.Level - 2) / 3 : 0);
+            minDmg *= maMult; maxDmg *= maMult;
+        }
 
         int brokenArmPenalty = P.BrokenLimbs.Count(l => l.Contains("Arm"));
         int warriorAtkBonus  = P.CharacterType == "Warrior"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
@@ -2472,6 +2535,15 @@ class CombatSession
         {
             int minGD = P.MinGrappleDmg + P.GetFeatStacks("Closeliner");
             int gDmg = Rng.Next(minGD, P.MaxGrappleDmg + 1);
+            // Martial Artist: +1d4 grapple damage every 4 levels from L2
+            if (P.CharacterType == "Martial Artist" && P.Level >= 2)
+            {
+                int maDice = (P.Level - 2) / 4 + 1;
+                int maBonus = 0;
+                for (int d = 0; d < maDice; d++) maBonus += Rng.Next(1, 5);
+                gDmg += maBonus;
+                Console.WriteLine($"  Martial Artist grip: +{maBonus} ({maDice}d4) grapple damage!");
+            }
             target.HP -= gDmg;
             Console.WriteLine($"  Grapple damage: {gDmg} → {target.Name} HP:{target.HP}/{target.MaxHP}");
             if (!target.Alive) { HandleKill(target); return; }
