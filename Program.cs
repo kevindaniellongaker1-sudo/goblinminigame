@@ -828,7 +828,8 @@ abstract class Enemy
     public int MinDamage, MaxDamage;
     public int MinDodge, MaxDodge;
     public int XPValue;
-    public bool Alive = true;
+    public bool Fled = false;
+    public bool Alive => HP > 0 && !Fled;
     public bool KnockedDown = false;
     public bool KnockedOut = false;
     public bool OffBalance = false;
@@ -1178,7 +1179,7 @@ class CombatSession
                 {
                     Console.WriteLine("\n! REINFORCEMENTS ARRIVE !");
                     PlaceEnemies(batch, nearEdge: true);
-                    foreach (var e in batch) { e.Alive = true; e.HP = e.MaxHP; Active.Add(e); Console.WriteLine($"  {e.Name} charges in! (HP:{e.HP})"); }
+                    foreach (var e in batch) { e.Fled = false; e.HP = e.MaxHP; Active.Add(e); Console.WriteLine($"  {e.Name} charges in! (HP:{e.HP})"); }
                 }
                 else newPending.Add((batch, turns - 1));
             }
@@ -2527,7 +2528,7 @@ class CombatSession
     void RaiseDead(Enemy corpse, Enemy necro)
     {
         corpse.HP = corpse.MaxHP;
-        corpse.Alive = true;
+        corpse.Fled = false;
         corpse.IsUndead = true;
         // Clear status effects and strip all feats / special abilities
         corpse.KnockedOut = false; corpse.KnockedDown = false; corpse.OffBalance = false;
@@ -3114,7 +3115,7 @@ class CombatSession
                     if (!stopped)
                     {
                         e.HasFledBefore = true;
-                        e.Alive = false;
+                        e.Fled = true;
                         var returnedGoblin = new Goblin(Rng, e.Name);
                         Pending.Add((new List<Enemy>
                         {
@@ -3138,7 +3139,7 @@ class CombatSession
                     if (!stopped)
                     {
                         e.HasFledBefore = true;
-                        e.Alive = false;
+                        e.Fled = true;
                         int healAmount = Rng.Next(1, 5);
                         var returnedHob = new Hobgoblin(Rng, e.Name);
                         returnedHob.HP = healAmount;
@@ -3192,7 +3193,7 @@ class CombatSession
                         if (!stopped)
                         {
                             e.HasFledBefore = true;
-                            e.Alive = false;
+                            e.Fled = true;
                             int healAmt = Rng.Next(2, 7);
                             int reinfRoll = Rng.Next(1, 7); // 1-2 = orc, 3-5 = two hobgoblins, 6 = spell goblin
                             var returnedOrc = new Orc(Rng, e.Name);
@@ -3351,7 +3352,7 @@ class CombatSession
                         if (!stopped)
                         {
                             e.HasFledBefore = true;
-                            e.Alive = false;
+                            e.Fled = true;
                             int totalHeal = Rng.Next(2, 5) + Rng.Next(2, 5) + Rng.Next(2, 5) + Rng.Next(1, 5);
                             var returnedTroll = new Troll(Rng, e.Name);
                             returnedTroll.HP = Math.Min(e.HP + totalHeal, returnedTroll.MaxHP);
@@ -3453,7 +3454,7 @@ class CombatSession
                             if (!stopped)
                             {
                                 e.HasFledBefore = true;
-                                e.Alive = false;
+                                e.Fled = true;
                                 int totalHeal = Rng.Next(1, 5) + Rng.Next(1, 5) + Rng.Next(1, 5) + Rng.Next(1, 5);
                                 var returnedOgre = new Ogre(Rng, e.Name);
                                 returnedOgre.HP = Math.Min(e.HP + totalHeal, returnedOgre.MaxHP);
