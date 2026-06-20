@@ -533,7 +533,7 @@ void SelectCharacterType(Player p)
         Console.WriteLine("  Starting: Great Axe (1d9) + unarmed 1d4");
         Console.WriteLine("  Whirlwind: spin CW/CCW hitting adjacent enemies (+1 hit per 3 levels from L2)");
         Console.WriteLine("  Rage: spend rage points (+1 per 4 levels from L2) for +2d4/pt damage for 3 turns");
-        Console.WriteLine("  Rage: survive at 0 HP while raging, heal 1d4 when rage fades");
+        Console.WriteLine("  Rage: survive at 0 HP while raging, heal 1d4 per rage point spent when rage fades");
     }
 }
 
@@ -1232,10 +1232,12 @@ class CombatSession
                 if (P.RageTurnsLeft <= 0)
                 {
                     P.IsRaging = false;
+                    int healDice = P.RagePointsSpent;
                     P.RagePointsSpent = 0;
-                    int rageHeal = Rng.Next(1, 5);
+                    int rageHeal = 0;
+                    for (int rd = 0; rd < healDice; rd++) rageHeal += Rng.Next(1, 5);
                     P.HP = Math.Clamp(P.HP + rageHeal, 0, P.MaxHP);
-                    Console.WriteLine($"  Rage fades! Recovered {rageHeal} HP. ({P.HP}/{P.MaxHP})");
+                    Console.WriteLine($"  Rage fades! Recovered {rageHeal} HP ({healDice}d4). ({P.HP}/{P.MaxHP})");
                     // Recalculate rage points (may have gained a level)
                     int maxRage = 1 + (P.Level >= 2 ? (P.Level - 2) / 4 + 1 : 0);
                     if (P.RagePoints < maxRage) P.RagePoints = Math.Min(P.RagePoints + 1, maxRage);
