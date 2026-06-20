@@ -2546,6 +2546,18 @@ class CombatSession
         Console.WriteLine($"  {necro.Name} raises {corpse.Name} from the dead! (Undead — base stats, no special abilities. HP:{corpse.HP}/{corpse.MaxHP})");
     }
 
+    Enemy MakeUndeadEnemy(Enemy e)
+    {
+        e.IsUndead = true;
+        e.HasDoubleTap = false; e.HasParry = false; e.HasBlock = false;
+        e.HasKick = false; e.HasArmBlock = false;
+        e.MagicResistant = false; e.MagicVulnerable = false;
+        e.ToughHideMin = 0; e.ToughHideMax = 0;
+        if (!e.Name.StartsWith("Undead ")) e.Name = "Undead " + e.Name;
+        e.TypeName = "Undead";
+        return e;
+    }
+
     void NecromancerHealUndead(Enemy necro, Enemy undead)
     {
         int heal = Rng.Next(1, 5) + Rng.Next(1, 5); // negative energy 2d4 heals undead
@@ -3298,6 +3310,46 @@ class CombatSession
                 e.HP = Math.Min(e.HP + nRegen, e.MaxHP);
                 Console.WriteLine($"  {e.Name} regenerates {nRegen} HP! (HP:{e.HP}/{e.MaxHP})");
 
+                // HP <= 4: flee and return with an undead army
+                if (e.HP <= 4 && !e.HasFledBefore)
+                {
+                    int dieRoll = Rng.Next(1, 5);
+                    if (dieRoll == 1)
+                    {
+                        Console.WriteLine($"  {e.Name} (desperate) grapples!");
+                        OrcGrappleAction(e);
+                    }
+                    else
+                    {
+                        Console.WriteLine($"  {e.Name} tries to flee!");
+                        bool stopped = PlayerFreeActionOnFleeingEnemy(e);
+                        if (!stopped)
+                        {
+                            e.HasFledBefore = true;
+                            e.Fled = true;
+                            int totalHeal = Rng.Next(2, 5) + Rng.Next(2, 5) + Rng.Next(2, 5);
+                            var returnedNecro = new NecromancerTroll(Rng, e.Name);
+                            returnedNecro.HP = Math.Min(e.HP + totalHeal, returnedNecro.MaxHP);
+                            Console.WriteLine($"  {e.Name} escapes! Returns in 3 turns with an undead army!");
+                            var batch = new List<Enemy> { returnedNecro };
+                            int companionCount = Rng.Next(1, 4); // 1-3 undead companions
+                            for (int ci = 0; ci < companionCount; ci++)
+                            {
+                                Enemy undead = Rng.Next(3) switch
+                                {
+                                    0 => MakeUndeadEnemy(new Orc(Rng, $"Undead Orc {ci + 1}")),
+                                    1 => MakeUndeadEnemy(new Troll(Rng, $"Undead Troll {ci + 1}")),
+                                    _ => MakeUndeadEnemy(new Ogre(Rng, $"Undead Ogre {ci + 1}"))
+                                };
+                                batch.Add(undead);
+                                Console.WriteLine($"  ...with {undead.Name}!");
+                            }
+                            Pending.Add((batch, 3));
+                        }
+                    }
+                    continue;
+                }
+
                 for (int i = 0; i < actions && P.HP > 0; i++)
                 {
                     // 1. Raise a nearby corpse (within 20ft) as undead
@@ -3331,10 +3383,13 @@ class CombatSession
                 // Spell hit also triggers grapple
                 if (e.HitBySpell) { e.GrappleNextTurn = true; }
 
-                // Free action: regenerate 2-4 HP
-                int regen = Rng.Next(2, 5);
-                e.HP = Math.Min(e.HP + regen, e.MaxHP);
-                Console.WriteLine($"  {e.Name} regenerates {regen} HP! (HP:{e.HP}/{e.MaxHP})");
+                // Free action: regenerate 2-4 HP (undead trolls do not regenerate)
+                if (!e.IsUndead)
+                {
+                    int regen = Rng.Next(2, 5);
+                    e.HP = Math.Min(e.HP + regen, e.MaxHP);
+                    Console.WriteLine($"  {e.Name} regenerates {regen} HP! (HP:{e.HP}/{e.MaxHP})");
+                }
 
                 // HP <= 4: roll 1d4 — 1=grapple, 2-4=flee
                 if (e.HP <= 4 && !e.HasFledBefore)
