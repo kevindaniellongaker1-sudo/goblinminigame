@@ -40,9 +40,9 @@ Console.WriteLine("════════════════════�
 
 ShowHiscores();
 
-Console.Write("\nHow many players? (1-4, default 1): ");
+Console.Write("\nHow many players? (1-5, default 1): ");
 int numPlayers = 1;
-if (int.TryParse((Console.ReadLine() ?? "").Trim(), out int npInput) && npInput >= 2 && npInput <= 4)
+if (int.TryParse((Console.ReadLine() ?? "").Trim(), out int npInput) && npInput >= 2 && npInput <= 5)
     numPlayers = npInput;
 
 for (int pi = 1; pi <= numPlayers; pi++)
@@ -123,7 +123,7 @@ while (true)
     Console.WriteLine($" GROUP {waveNum}: {DescribeGroup(group)}");
     Console.WriteLine($"──────────────────────────────────");
 
-    var session = new CombatSession(player, group, rng, XpThreshold, GainXP,
+    var session = new CombatSession(player, allPlayers, group, rng, XpThreshold, GainXP,
         groupsDefeated == 0 ? new GridPos(1, 48) : new GridPos(1, 25),
         state, waveNum);
     bool survived = session.Run();
@@ -319,6 +319,7 @@ void GainXP(int xp)
         Console.WriteLine($"  +{adjusted} XP{tag}! (Total: {pl.XP}, Level: {pl.Level})");
         while (pl.XP >= XpThreshold(pl.Level + 1))
         {
+            foreach (var sv in allPlayers) SaveGame(sv, groupsDefeated);
             pl.Level++;
             string who = allPlayers.Count > 1 ? pl.Name : "You";
             Console.WriteLine($"\n★★★ LEVEL UP! {who} {(allPlayers.Count > 1 ? "is" : "are")} now Level {pl.Level}! ★★★");
@@ -1186,6 +1187,7 @@ struct GridPos
 class CombatSession
 {
     readonly Player P;
+    readonly IReadOnlyList<Player> AllPlayers;
     readonly Random Rng;
     readonly Func<int, int> XpThreshold;
     readonly Action<int> GainXP;
@@ -1197,9 +1199,9 @@ class CombatSession
     SharedGameState? _displayState;
     int _waveNum;
 
-    public CombatSession(Player p, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart, SharedGameState? displayState = null, int waveNum = 0)
+    public CombatSession(Player p, IReadOnlyList<Player> allPlayers, List<Enemy> enemies, Random rng, Func<int, int> xpFn, Action<int> gainXp, GridPos playerStart, SharedGameState? displayState = null, int waveNum = 0)
     {
-        P = p; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
+        P = p; AllPlayers = allPlayers; Active = enemies; Rng = rng; XpThreshold = xpFn; GainXP = gainXp;
         PlayerPos = playerStart;
         _displayState = displayState;
         _waveNum = waveNum;
@@ -1300,7 +1302,14 @@ class CombatSession
             alive = Active.Where(e => e.Alive).ToList();
             if (!alive.Any() && !Pending.Any()) break;
 
-            Console.WriteLine($"\nHP: {P.HP}/{P.MaxHP}  XP: {P.XP}  Level: {P.Level}");
+            if (AllPlayers.Count > 1)
+            {
+                Console.WriteLine();
+                foreach (var pl in AllPlayers)
+                    Console.WriteLine($"  {pl.Name}: HP {pl.HP}/{pl.MaxHP}  XP {pl.XP}  Lv {pl.Level}{(pl == P ? "  [active]" : "")}");
+            }
+            else
+                Console.WriteLine($"\nHP: {P.HP}/{P.MaxHP}  XP: {P.XP}  Level: {P.Level}");
             if (P.BurningDmg > 0) Console.WriteLine($"  [BURNING {P.BurningDmg}/turn × {P.BurningTurns}t]");
             if (P.FrostPenalty > 0) Console.WriteLine($"  [FROZEN -{P.FrostPenalty} dodge × {P.FrostTurns}t]");
             ShowMap(alive);
