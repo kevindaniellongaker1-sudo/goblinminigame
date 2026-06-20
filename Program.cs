@@ -269,6 +269,12 @@ void GainXP(int xp)
             Console.WriteLine($"  Gear point earned! (Level {player.Level} milestone)");
             SpendGearPoints(player);
         }
+        // Berserker: recalculate rage points on level-up
+        if (player.CharacterType == "Berserker")
+        {
+            int maxRage = 1 + (player.Level >= 2 ? (player.Level - 2) / 4 + 1 : 0);
+            if (player.RagePoints < maxRage) player.RagePoints = maxRage;
+        }
     }
 }
 
@@ -436,15 +442,16 @@ void AskName(Player p)
 
 void SelectCharacterType(Player p)
 {
-    var types = new[] { "Mage", "Priest", "Warrior", "Duelist", "Archer", "Martial Artist" };
+    var types = new[] { "Mage", "Priest", "Warrior", "Duelist", "Archer", "Martial Artist", "Berserker" };
     Console.WriteLine("\nChoose your character type:");
     Console.WriteLine("  [1] Mage           — Wand + Staff; Air Blade (ranged) + Air Wave (knockback)");
     Console.WriteLine("  [2] Priest         — Prayers: Healing, Forgiveness, Lord's Prayer");
     Console.WriteLine("  [3] Warrior        — 2x Hand Axe; bonus actions + atk bonus scale with level");
     Console.WriteLine("  [4] Duelist        — Rapier + daggers; Duelist Points & special actions");
     Console.WriteLine("  [5] Archer         — Bow + 50 arrows + Short Sword backup");
-    Console.WriteLine("  [6] Martial Artist — Pick a martial art; 2d4 unarmed scaling + grapple/throw");
-    Console.Write("  Choice (1-6 or name): ");
+    Console.WriteLine("  [6] Martial Artist — Pick a martial art; 1d6+2d4 scaling + grapple/throw");
+    Console.WriteLine("  [7] Berserker      — Great Axe; Whirlwind spin + Rage (survive lethal hits)");
+    Console.Write("  Choice (1-7 or name): ");
     string raw = (Console.ReadLine() ?? "").Trim();
     string chosen = "Warrior";
     if (int.TryParse(raw, out int cidx) && cidx >= 1 && cidx <= types.Length)
@@ -518,6 +525,16 @@ void SelectCharacterType(Player p)
         Console.WriteLine($"  Martial art: {art}!  Unarmed: 1d6 + 2d4 bonus every 3 levels from L2");
         Console.WriteLine("  Bonus: +1d4 grapple dmg every 4 levels from L2; bonus melee/throw action every 3 levels from L2");
     }
+    else if (chosen == "Berserker")
+    {
+        p.MinDamage = 1; p.MaxDamage = 4; // 1d4 unarmed
+        p.HeldWeapon = "Great Axe";
+        p.RagePoints = 1;
+        Console.WriteLine("  Starting: Great Axe (1d9) + unarmed 1d4");
+        Console.WriteLine("  Whirlwind: spin CW/CCW hitting adjacent enemies (+1 hit per 3 levels from L2)");
+        Console.WriteLine("  Rage: spend rage points (+1 per 4 levels from L2) for +2d4/pt damage for 3 turns");
+        Console.WriteLine("  Rage: survive at 0 HP while raging, heal 1d4 when rage fades");
+    }
 }
 
 string GameSaveDir()
@@ -572,6 +589,7 @@ void SaveGame(Player p, int groups)
         $"ArrowCount={p.ArrowCount}",
         $"DaggerCount={p.DaggerCount}",
         $"AxeCount={p.AxeCount}",
+        $"RagePoints={p.RagePoints}",
         $"SecondaryWeapon={p.SecondaryWeapon ?? ""}",
         $"GroupsDefeated={groups}",
     };
@@ -630,6 +648,7 @@ bool TryLoadGame(Player p, string filePath)
         p.ArrowCount = I("ArrowCount");
         p.DaggerCount = I("DaggerCount");
         p.AxeCount = I("AxeCount");
+        p.RagePoints = I("RagePoints");
         p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
 
         groupsDefeated = I("GroupsDefeated");
@@ -774,6 +793,10 @@ class Player
     public Dictionary<string, int> DuelistEffectTurns = new();
     public List<string> BrokenLimbs = new();
     public string CharacterType = "Warrior";
+    public int RagePoints = 0;
+    public bool IsRaging = false;
+    public int RageTurnsLeft = 0;
+    public int RagePointsSpent = 0;
 
     public Player(Random rng)
     {
@@ -981,6 +1004,8 @@ class Ogre : Enemy
 class OrcBarbarian : Enemy
 {
     public int HandAxeCount = 4;
+    public int OrcRagePoints = 1;
+    public bool OrcIsRaging = false;
     public OrcBarbarian(Random rng, string name) : base(name, "Orc Barbarian")
     {
         MaxHP = 35; HP = MaxHP;        // Orc base 25 + 10
@@ -1200,7 +1225,23 @@ class CombatSession
 
             bool fled = PlayerTurn();
             if (fled) { PlayerFled = true; Console.WriteLine("You escaped!"); return true; }
-            if (P.HP <= 0) break;
+            // Tick rage down; rage end heals and restores survivability
+            if (P.IsRaging)
+            {
+                P.RageTurnsLeft--;
+                if (P.RageTurnsLeft <= 0)
+                {
+                    P.IsRaging = false;
+                    P.RagePointsSpent = 0;
+                    int rageHeal = Rng.Next(1, 5);
+                    P.HP = Math.Clamp(P.HP + rageHeal, 0, P.MaxHP);
+                    Console.WriteLine($"  Rage fades! Recovered {rageHeal} HP. ({P.HP}/{P.MaxHP})");
+                    // Recalculate rage points (may have gained a level)
+                    int maxRage = 1 + (P.Level >= 2 ? (P.Level - 2) / 4 + 1 : 0);
+                    if (P.RagePoints < maxRage) P.RagePoints = Math.Min(P.RagePoints + 1, maxRage);
+                }
+            }
+            if (P.HP <= 0 && !P.IsRaging) break;
 
             alive = Active.Where(e => e.Alive).ToList();
             if (!alive.Any() && !Pending.Any()) break;
@@ -1242,6 +1283,8 @@ class CombatSession
             }
         }
 
+        if (P.IsRaging)
+            Console.WriteLine($"  [RAGING — {P.RageTurnsLeft} turn(s) left, +{P.RagePointsSpent*2}d4 dmg/hit]");
         int actLeft = 2 + P.AdditionalActions;
         if (P.HasFeat("Chidia")) actLeft += 2;
 
@@ -1420,6 +1463,74 @@ class CombatSession
                         else Console.WriteLine($"  {e.Name} misses — you slip past!");
                     }
                     if (!blocked) fled = true;
+                    justBlocked = false;
+                    break;
+                }
+
+                case "rage":
+                {
+                    if (P.RagePoints <= 0 || P.IsRaging) { Console.WriteLine("  No rage points available."); continue; }
+                    int maxSpend = P.RagePoints;
+                    Console.Write($"  Spend how many rage points? (1-{maxSpend}): ");
+                    if (!int.TryParse(Console.ReadLine()?.Trim(), out int rpts) || rpts < 1 || rpts > maxSpend)
+                    { Console.WriteLine("  Invalid."); continue; }
+                    P.RagePoints -= rpts;
+                    P.RagePointsSpent = rpts;
+                    P.IsRaging = true;
+                    P.RageTurnsLeft = 3;
+                    Console.WriteLine($"  RAGE! +{rpts*2}d4 damage for 3 turns!");
+                    justBlocked = false;
+                    break;
+                }
+
+                case "whirlwind":
+                {
+                    var wwAlive = Active.Where(e => e.Alive).ToList();
+                    if (!wwAlive.Any()) { Console.WriteLine("  No enemies to hit."); continue; }
+                    int numHits = 1 + (P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0);
+                    Console.Write($"  Whirlwind ({numHits} swings)! [C]lockwise or [A]nti-clockwise? ");
+                    string wwDir = (Console.ReadLine() ?? "c").Trim().ToLower();
+                    bool cw = !wwDir.StartsWith("a");
+                    // 8 directions cycling CW: N NE E SE S SW W NW
+                    var cwDirs = new (int dx, int dy)[] { (0,-1),(1,-1),(1,0),(1,1),(0,1),(-1,1),(-1,0),(-1,-1) };
+                    var ccwDirs = new (int dx, int dy)[] { (0,-1),(-1,-1),(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1) };
+                    var dirs = cw ? cwDirs : ccwDirs;
+                    var hitSet = new HashSet<Enemy>();
+                    Console.WriteLine($"  You spin {(cw ? "clockwise" : "counter-clockwise")}, striking {numHits} times!");
+                    int minDmgW = P.HeldWeapon != null ? WeaponPickupStats(P.HeldWeapon).MinDmg : P.MinDamage;
+                    int maxDmgW = P.HeldWeapon != null ? WeaponPickupStats(P.HeldWeapon).MaxDmg : P.MaxDamage;
+                    for (int hi = 0; hi < numHits; hi++)
+                    {
+                        wwAlive = Active.Where(e => e.Alive).ToList();
+                        if (!wwAlive.Any()) break;
+                        var (dx, dy) = dirs[hi % 8];
+                        int range = hi >= 4 ? 2 : 1;
+                        bool swingHit = false;
+                        for (int r = 1; r <= range; r++)
+                        {
+                            var sq = new GridPos(PlayerPos.X + dx * r, PlayerPos.Y + dy * r);
+                            foreach (var te in wwAlive.Where(e => e.Position.SameAs(sq)).ToList())
+                            {
+                                if (hi < 4 && hitSet.Contains(te)) continue;
+                                hitSet.Add(te);
+                                swingHit = true;
+                                int wAtk = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+                                int tDdg = Rng.Next(te.MinDodge, te.MaxDodge + 1) - te.DodgePenalty;
+                                Console.WriteLine($"  Swing {hi+1}: {te.Name} — roll {wAtk} vs dodge {tDdg}.");
+                                if (wAtk >= tDdg && !EnemyBlocks(te, wAtk))
+                                {
+                                    int dmgW = Rng.Next(minDmgW, maxDmgW + 1);
+                                    if (P.IsRaging) for (int d = 0; d < P.RagePointsSpent * 2; d++) dmgW += Rng.Next(1, 5);
+                                    dmgW = ReduceByToughHide(te, dmgW);
+                                    Console.WriteLine($"  HIT! {dmgW} dmg → {te.Name} HP:{te.HP - dmgW}/{te.MaxHP}");
+                                    te.HP -= dmgW;
+                                    if (!te.Alive) ResolveDowned(te, IsNonLethalAttack());
+                                }
+                                else Console.WriteLine($"  Miss!");
+                            }
+                        }
+                        if (!swingHit) Console.WriteLine($"  Swing {hi+1}: no target in that direction.");
+                    }
                     justBlocked = false;
                     break;
                 }
@@ -2000,6 +2111,8 @@ class CombatSession
         if (P.CharacterType == "Duelist" && P.DuelistPoints > 0 && dMaxPts > 0) o.Add("duelist action");
         if (P.SecondaryWeapon != null) o.Add("switch weapon");
         if (GroundWeapons.Any(w => PlayerPos.ManhattanDist(w.Pos) <= 1)) o.Add("pick up weapon");
+        if (P.CharacterType == "Berserker") o.Add("whirlwind");
+        if (P.CharacterType == "Berserker" && P.RagePoints > 0 && !P.IsRaging) o.Add("rage");
         return o;
     }
 
@@ -2071,7 +2184,28 @@ class CombatSession
             dmgBonus += maBonusDmg;
             Console.WriteLine($"  Martial Artist: +{maBonusDmg} ({numSets * 2}d4) unarmed bonus!");
         }
+        // Martial Artist + Staff: add half unarmed damage as bonus
+        if (P.CharacterType == "Martial Artist" && P.HeldWeapon == "Staff")
+        {
+            int unarmedRoll = Rng.Next(P.MinDamage, P.MaxDamage + 1);
+            if (P.Level >= 2)
+            {
+                int numSetsS = (P.Level - 2) / 3 + 1;
+                for (int d = 0; d < numSetsS * 2; d++) unarmedRoll += Rng.Next(1, 5);
+            }
+            int staffBonus = Math.Max(1, unarmedRoll / 2);
+            dmgBonus += staffBonus;
+            Console.WriteLine($"  Martial Artist staff: +{staffBonus} (half unarmed) bonus!");
+        }
 
+        // Berserker rage: +2d4 per rage point spent
+        if (P.IsRaging && P.RagePointsSpent > 0)
+        {
+            int rageDmg = 0;
+            for (int d = 0; d < P.RagePointsSpent * 2; d++) rageDmg += Rng.Next(1, 5);
+            dmgBonus += rageDmg;
+            Console.WriteLine($"  RAGE: +{rageDmg} ({P.RagePointsSpent*2}d4) bonus damage!");
+        }
         int brokenArmPenalty = P.BrokenLimbs.Count(l => l.Contains("Arm"));
         int warriorAtkBonus  = P.CharacterType == "Warrior"  && P.Level >= 2 ? (P.Level - 2) / 3 + 1 : 0;
 
@@ -2418,6 +2552,7 @@ class CombatSession
         "Battle Axe"     => (3, 9, 4, 12),
         "War Mace"       => (3, 9, 4, 14),
         "Mace"           => (1, 6, 2, 8),
+        "Great Axe"      => (2, 9, 1, 9),
         "Staff"          => (1, 6, 2, 6),
         "Wand"           => (1, 6, 3, 4),
         _ => (0, 0, 0, 0)
@@ -3035,6 +3170,15 @@ class CombatSession
             // ── Orc Barbarian AI ───────────────────────────────────────────
             if (e is OrcBarbarian ob)
             {
+                // Spend rage point if HP drops below 10%
+                if (ob.OrcRagePoints > 0 && !ob.OrcIsRaging && ob.HP <= ob.MaxHP / 10)
+                {
+                    ob.OrcRagePoints--;
+                    ob.OrcIsRaging = true;
+                    ob.MinDamage += Rng.Next(1, 5) + Rng.Next(1, 5); // +2d4 flat to main hand damage
+                    ob.MaxDamage += 8;
+                    Console.WriteLine($"  {ob.Name} RAGES! Battle fury!");
+                }
                 if (e.HP < e.HpAtTurnStart) e.ConsecutiveDmgTurns++;
                 else e.ConsecutiveDmgTurns = 0;
                 if (e.ConsecutiveDmgTurns >= 4) { e.GrappleNextTurn = true; e.ConsecutiveDmgTurns = 0; }
@@ -3548,6 +3692,7 @@ class CombatSession
             if (P.ArmorDamageReduction > 0) dmg = Math.Max(1, dmg - P.ArmorDamageReduction);
             Console.WriteLine($"  HIT! You take {dmg} damage. HP: {P.HP - dmg}/{P.MaxHP}");
             P.HP -= dmg;
+            if (P.IsRaging && P.HP < 0) { P.HP = 0; Console.WriteLine("  RAGE keeps you standing!"); }
             // Double Tap off-hand
             if (e.HasDoubleTap && P.HP > 0 && !e.DroppedWeapon)
             {
@@ -3562,6 +3707,7 @@ class CombatSession
                     if (P.ArmorDamageReduction > 0) ofDmg = Math.Max(1, ofDmg - P.ArmorDamageReduction);
                     Console.WriteLine($"  Off-hand HIT! {ofDmg} damage. HP:{P.HP - ofDmg}/{P.MaxHP}");
                     P.HP -= ofDmg;
+                    if (P.IsRaging && P.HP < 0) { P.HP = 0; Console.WriteLine("  RAGE keeps you standing!"); }
                     if (e.OffhandNonLethal && ofDmg >= e.OffhandMaxDmg)
                     {
                         string[] limbs = { "Left Arm", "Right Arm", "Left Leg", "Right Leg" };
