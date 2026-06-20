@@ -199,26 +199,54 @@ List<Enemy> BuildGroup(int waveNum, Random r)
     }
     else if (waveNum <= 20)
     {
-        int hobs = Math.Min(waveNum - 10, 10);
-        int gobs = Math.Max(0, 21 - waveNum);
-        for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
-        for (int i = 0; i < gobs; i++) g.Add(new Goblin(r, $"Goblin {i + 1}"));
+        // Wave 11-20: each slot rolls — 1 goblin, 2 goblins, or 1 hobgoblin
+        int slots = waveNum - 10;
+        int gn = 1, hn = 1;
+        for (int i = 0; i < slots; i++)
+        {
+            switch (r.Next(1, 4))
+            {
+                case 1: g.Add(new Goblin(r, $"Goblin {gn++}")); break;
+                case 2: g.Add(new Goblin(r, $"Goblin {gn++}")); g.Add(new Goblin(r, $"Goblin {gn++}")); break;
+                case 3: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
+            }
+        }
     }
     else if (waveNum <= 30)
     {
-        // Wave 21-30: orcs replace hobgoblins one-for-one
-        int orcs = waveNum - 20;
-        int hobs = Math.Max(0, 10 - orcs);
-        for (int i = 0; i < hobs; i++) g.Add(new Hobgoblin(r, $"Hobgoblin {i + 1}"));
-        for (int i = 0; i < orcs; i++) g.Add(new Orc(r, $"Orc {i + 1}"));
+        // Wave 21-30: adds 2 hobgoblins or 1 orc to the roll table
+        int slots = 10;
+        int gn = 1, hn = 1, on = 1;
+        for (int i = 0; i < slots; i++)
+        {
+            switch (r.Next(1, 6))
+            {
+                case 1: g.Add(new Goblin(r, $"Goblin {gn++}")); break;
+                case 2: g.Add(new Goblin(r, $"Goblin {gn++}")); g.Add(new Goblin(r, $"Goblin {gn++}")); break;
+                case 3: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
+                case 4: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
+                case 5: g.Add(new Orc(r, $"Orc {on++}")); break;
+            }
+        }
     }
     else if (waveNum <= 40)
     {
-        // Wave 31-40: trolls replace orcs one-for-one
-        int trolls = waveNum - 30;
-        int orcs = Math.Max(0, 10 - trolls);
-        for (int i = 0; i < orcs; i++) g.Add(new Orc(r, $"Orc {i + 1}"));
-        for (int i = 0; i < trolls; i++) g.Add(new Troll(r, $"Troll {i + 1}"));
+        // Wave 31-40: adds 2 orcs or 1 troll to the roll table
+        int slots = 10;
+        int gn = 1, hn = 1, on = 1, tn = 1;
+        for (int i = 0; i < slots; i++)
+        {
+            switch (r.Next(1, 8))
+            {
+                case 1: g.Add(new Goblin(r, $"Goblin {gn++}")); break;
+                case 2: g.Add(new Goblin(r, $"Goblin {gn++}")); g.Add(new Goblin(r, $"Goblin {gn++}")); break;
+                case 3: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
+                case 4: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
+                case 5: g.Add(new Orc(r, $"Orc {on++}")); break;
+                case 6: g.Add(new Orc(r, $"Orc {on++}")); g.Add(new Orc(r, $"Orc {on++}")); break;
+                case 7: g.Add(new Troll(r, $"Troll {tn++}")); break;
+            }
+        }
     }
     else
     {
