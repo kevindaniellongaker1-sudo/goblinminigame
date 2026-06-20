@@ -109,6 +109,16 @@ while (true)
     int waveNum = groupsDefeated + 1;
     var group = BuildGroup(waveNum, rng);
 
+    // Reset Berserker rage points to full at the start of each wave
+    foreach (var pl in allPlayers.Where(pl => pl.CharacterType == "Berserker"))
+    {
+        int maxRage = 1 + (pl.Level >= 2 ? (pl.Level - 2) / 4 + 1 : 0);
+        pl.RagePoints = maxRage;
+        pl.IsRaging = false;
+        pl.RageTurnsLeft = 0;
+        pl.RagePointsSpent = 0;
+    }
+
     Console.WriteLine($"\n──────────────────────────────────");
     Console.WriteLine($" GROUP {waveNum}: {DescribeGroup(group)}");
     Console.WriteLine($"──────────────────────────────────");
@@ -237,7 +247,7 @@ List<Enemy> BuildGroup(int waveNum, Random r)
             }
         }
     }
-    return g;
+    return g.Count > 12 ? g.Take(12).ToList() : g;
 }
 
 string DescribeGroup(List<Enemy> g) =>
