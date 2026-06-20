@@ -239,10 +239,10 @@ List<Enemy> BuildGroup(int waveNum, Random r)
                 case 6: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Goblin {i * 5 + j + 1}")); break;
                 case 7: if (waveNum >= 51) g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); else for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc {i * 3 + j + 1}")); break;
                 case 8: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hobgoblin {i * 4 + j + 1}")); break;
-                case 9: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i + 1}")); break;
+                case 9: if (waveNum >= 61) g.Add(new OrcBarbarian(r, $"Orc Barbarian {i + 1}")); else g.Add(new Troll(r, $"Troll {i + 1}")); break;
                 case 11: g.Add(new NecromancerTroll(r, $"Necromancer Troll {i + 1}")); break;
                 case 12: g.Add(new NecromancerTroll(r, $"Necromancer Troll {i + 1}")); g.Add(new Troll(r, $"Troll Thrall {i + 1}")); break;
-                default: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 1}")); g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 2}")); break;
+                default: if (waveNum >= 61) { g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 1}")); g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 2}")); } else { g.Add(new Troll(r, $"Troll {i*2 + 1}")); g.Add(new Troll(r, $"Troll {i*2 + 2}")); } break;
             }
         }
     }
@@ -3321,6 +3321,49 @@ class CombatSession
                 if (e.HP < e.HpAtTurnStart) e.ConsecutiveDmgTurns++;
                 else e.ConsecutiveDmgTurns = 0;
                 if (e.ConsecutiveDmgTurns >= 4) { e.GrappleNextTurn = true; e.ConsecutiveDmgTurns = 0; }
+
+                // Wave 61+: flee and return when critically wounded
+                if (_waveNum >= 61 && e.HP <= 3 && !e.HasFledBefore)
+                {
+                    Console.WriteLine($"  {e.Name} tries to flee!");
+                    bool stopped = PlayerFreeActionOnFleeingEnemy(e);
+                    if (!stopped)
+                    {
+                        e.HasFledBefore = true;
+                        e.Fled = true;
+                        int totalHeal = Rng.Next(2, 5) + Rng.Next(2, 5) + Rng.Next(1, 5);
+                        var returnedOb = new OrcBarbarian(Rng, e.Name);
+                        returnedOb.HP = Math.Min(e.HP + totalHeal, returnedOb.MaxHP);
+                        Console.WriteLine($"  {e.Name} escapes! Returns in 2 turns healed {totalHeal} HP.");
+                        var batch = new List<Enemy> { returnedOb };
+                        int reinfRoll = Rng.Next(1, _waveNum >= 71 ? 7 : 6);
+                        switch (reinfRoll)
+                        {
+                            case 1:
+                                batch.Add(new OrcBarbarian(Rng, "Orc Barbarian Backup"));
+                                Console.WriteLine($"  ...with another Orc Barbarian!");
+                                break;
+                            case 2: case 3:
+                                batch.Add(new Orc(Rng, "Orc A")); batch.Add(new Orc(Rng, "Orc B"));
+                                Console.WriteLine($"  ...with two Orcs!");
+                                break;
+                            case 4:
+                                batch.Add(new Troll(Rng, "Troll Backup"));
+                                Console.WriteLine($"  ...with a Troll!");
+                                break;
+                            case 5:
+                                for (int gi = 0; gi < 3; gi++) batch.Add(new Hobgoblin(Rng, $"Hobgoblin {gi + 1}"));
+                                Console.WriteLine($"  ...with three Hobgoblins!");
+                                break;
+                            case 6: // wave 71+ only
+                                batch.Add(new NecromancerTroll(Rng, "Necromancer Troll"));
+                                Console.WriteLine($"  ...with a Necromancer Troll!");
+                                break;
+                        }
+                        Pending.Add((batch, 2));
+                    }
+                    continue;
+                }
 
                 if (e.GrappleNextTurn && actions > 0)
                 {
