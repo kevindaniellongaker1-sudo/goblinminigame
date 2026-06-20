@@ -492,6 +492,13 @@ void SelectCharacterType(Player p)
         Console.WriteLine("  Bow range: 5-14ft=4-12dmg  15-45ft=2-10dmg  46-60ft=1-5dmg  Min 4ft  Max 60ft");
         Console.WriteLine("  Unarmed: 1-4");
     }
+    else if (chosen == "Priest")
+    {
+        p.MaxDamage = 4; // 1-4 unarmed
+        Console.WriteLine("  Starting: unarmed (1-4 dmg)");
+        Console.WriteLine("  Prayers: Prayer of Healing (25ft heal), Forgiveness (30ft convert), Lord's Prayer (6ft AoE dmg)");
+        Console.WriteLine("  All prayers scale every 3 levels from L2; Forgiveness also gains AoE/threshold every 4 levels from L2");
+    }
 }
 
 string GameSaveDir()
@@ -1479,6 +1486,86 @@ class CombatSession
                     break;
                 }
 
+                case "pray":
+                {
+                    int L = P.Level;
+                    int healDice   = 1 + (L >= 2 ? (L-2)/3+1 : 0);
+                    int forgDice   = 2 + (L >= 2 ? (L-2)/3+1 : 0);
+                    int forgThresh = 10 + 5 * (L >= 2 ? (L-2)/4+1 : 0); // % of max HP
+                    int forgAoe    = 6  * (L >= 2 ? (L-2)/4+1 : 0);     // feet (0 = single target)
+                    int lordMult   = Math.Max(1, L/4);
+                    int lordD4s    = L >= 2 ? (L-2)/3+1 : 0;
+
+                    Console.WriteLine($"  Prayers available:");
+                    Console.WriteLine($"  [1] Prayer of Healing  — heal {healDice}d6 (range 25ft, self or ally)");
+                    Console.WriteLine($"  [2] Forgiveness        — convert enemy ≤{forgThresh}% HP; roll {forgDice}d4 vs HP{(forgAoe > 0 ? $"; AoE {forgAoe}ft" : "")} (range 30ft)");
+                    Console.WriteLine($"  [3] Lord's Prayer      — {lordMult}d6{(lordD4s > 0 ? $"+{lordD4s}d4" : "")} dmg to all enemies within 6ft");
+                    Console.Write("  Choose prayer: ");
+                    string pc = (Console.ReadLine() ?? "").Trim();
+
+                    if (pc == "1") // ── Prayer of Healing ─────────────────
+                    {
+                        int heal = 0;
+                        for (int d = 0; d < healDice; d++) heal += Rng.Next(1, 7);
+                        heal = Math.Min(heal, P.MaxHP - P.HP);
+                        P.HP += heal;
+                        Console.WriteLine($"  Prayer of Healing! Restored {heal} HP. ({P.HP}/{P.MaxHP})");
+                    }
+                    else if (pc == "2") // ── Forgiveness ───────────────────
+                    {
+                        var forgTargets = new List<Enemy>();
+                        if (forgAoe > 0)
+                        {
+                            // AoE: all enemies within 30ft range and AoE radius who qualify
+                            forgTargets = alive.Where(e =>
+                                PlayerPos.Feet(e.Position) <= 30f &&
+                                e.HP <= (int)Math.Ceiling(e.MaxHP * forgThresh / 100f)).ToList();
+                            if (!forgTargets.Any())
+                            { Console.WriteLine($"  No enemies within 30ft at ≤{forgThresh}% HP."); break; }
+                            Console.WriteLine($"  Forgiveness AoE ({forgAoe}ft)! Targeting {forgTargets.Count} enemy(ies).");
+                        }
+                        else
+                        {
+                            var t = PickTarget(alive.Where(e =>
+                                PlayerPos.Feet(e.Position) <= 30f &&
+                                e.HP <= (int)Math.Ceiling(e.MaxHP * forgThresh / 100f)).ToList());
+                            if (t == null) { Console.WriteLine($"  No enemy within 30ft at ≤{forgThresh}% HP."); break; }
+                            forgTargets.Add(t);
+                        }
+                        foreach (var ft in forgTargets)
+                        {
+                            int roll = 0;
+                            for (int d = 0; d < forgDice; d++) roll += Rng.Next(1, 5);
+                            Console.WriteLine($"  Forgiveness on {ft.Name} (HP:{ft.HP})! Roll {forgDice}d4={roll} vs HP {ft.HP}.");
+                            if (roll >= ft.HP)
+                            {
+                                Console.WriteLine($"  {ft.Name} is forgiven! They lay down their arms and depart.");
+                                HandleKill(ft);
+                            }
+                            else Console.WriteLine($"  {ft.Name} resists the prayer.");
+                        }
+                    }
+                    else if (pc == "3") // ── Lord's Prayer ─────────────────
+                    {
+                        var lordTargets = alive.Where(e => PlayerPos.Feet(e.Position) <= 6f).ToList();
+                        if (!lordTargets.Any()) { Console.WriteLine("  No enemies within 6ft!"); break; }
+                        Console.WriteLine($"  Lord's Prayer! ({lordMult}d6{(lordD4s > 0 ? $"+{lordD4s}d4" : "")} dmg to {lordTargets.Count} enemy(ies))");
+                        foreach (var lt in lordTargets)
+                        {
+                            int dmg = 0;
+                            for (int d = 0; d < lordMult; d++) dmg += Rng.Next(1, 7);
+                            for (int d = 0; d < lordD4s; d++) dmg += Rng.Next(1, 5);
+                            dmg = ReduceByToughHide(lt, dmg);
+                            Console.WriteLine($"  {lt.Name} takes {dmg} holy dmg. HP:{lt.HP - dmg}/{lt.MaxHP}");
+                            lt.HP -= dmg;
+                            if (!lt.Alive) HandleKill(lt);
+                        }
+                    }
+                    else { Console.WriteLine("  No prayer chosen."); continue; }
+                    justBlocked = false;
+                    break;
+                }
+
                 case "pick up goblin sword":
                     P.HasGoblinSword = true;
                     P.OffhandMaxDamage += 2;
@@ -1843,6 +1930,7 @@ class CombatSession
         if (P.HasFeat("Parry") && justBlocked && !(blockTarget is Ogre)) o.Add("parry");
         if (P.HasFeat("Bard Song")) o.Add("bard song");
         if (P.KnownSpells.Any()) o.Add("cast spell");
+        if (P.CharacterType == "Priest") o.Add("pray");
         bool deadGoblin = Active.Any(e => !e.Alive && e is Goblin);
         if (P.HasFeat("Double Tap") && deadGoblin && !P.HasGoblinSword) o.Add("pick up goblin sword");
         if (P.HeldWeapon is "Goblin Dagger" or "Troll Axe") o.Add("throw weapon");
