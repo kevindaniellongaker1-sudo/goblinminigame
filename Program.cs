@@ -32,6 +32,7 @@ void RunGameLogic(SharedGameState state)
 
 var rng = new Random();
 var player = new Player(rng);
+var allPlayers = new List<Player> { player };
 int groupsDefeated = 0;
 
 Console.WriteLine("═══════════════════════════════════════════════════════");
@@ -83,10 +84,26 @@ else
     AskName(player);
 }
 
+// ── Number of players ─────────────────────────────────────────────────────
+Console.Write("\nHow many players? (1-4, default 1): ");
+int numPlayers = 1;
+if (int.TryParse((Console.ReadLine() ?? "").Trim(), out int npInput) && npInput >= 2 && npInput <= 4)
+    numPlayers = npInput;
+for (int pi = 2; pi <= numPlayers; pi++)
+{
+    var extra = new Player(rng);
+    Console.WriteLine($"\n── Player {pi} Setup ──");
+    AskName(extra);
+    allPlayers.Add(extra);
+}
+
 Console.WriteLine($"\nYou are {player.Name}!");
+if (allPlayers.Count > 1)
+    Console.WriteLine($"Party: {string.Join(", ", allPlayers.Select(pl => pl.Name))}");
 Console.WriteLine($"HP: {player.HP}/{player.MaxHP}\n");
 
 if (player.PendingFeats > 0) SelectFeats(player);
+foreach (var ep in allPlayers.Skip(1).Where(p => p.PendingFeats > 0)) SelectFeats(ep);
 
 while (true)
 {
@@ -112,7 +129,11 @@ while (true)
 
     groupsDefeated++;
     Console.WriteLine($"\n✓ Group {groupsDefeated} cleared!  HP: {player.HP}/{player.MaxHP}  XP: {player.XP}  Level: {player.Level}");
+    if (allPlayers.Count > 1)
+        foreach (var pl in allPlayers.Skip(1))
+            Console.WriteLine($"  {pl.Name}: XP {pl.XP}  Level {pl.Level}");
     while (player.PendingFeats > 0) SelectFeats(player);
+    foreach (var ep in allPlayers.Skip(1).Where(p => p.PendingFeats > 0)) SelectFeats(ep);
 
     if (session.PlayerFled)
     {
@@ -251,31 +272,36 @@ int XpThreshold(int level)
 
 void GainXP(int xp)
 {
-    player.XP += xp;
-    Console.WriteLine($"  +{xp} XP! (Total: {player.XP}, Level: {player.Level})");
-    while (player.XP >= XpThreshold(player.Level + 1))
+    int adjusted = allPlayers.Count > 1 ? (int)(xp * 0.9) : xp;
+    foreach (var pl in allPlayers)
     {
-        player.Level++;
-        Console.WriteLine($"\n★★★ LEVEL UP! You are now Level {player.Level}! ★★★");
+        pl.XP += adjusted;
+        string tag = allPlayers.Count > 1 ? $" ({pl.Name})" : "";
+        Console.WriteLine($"  +{adjusted} XP{tag}! (Total: {pl.XP}, Level: {pl.Level})");
+        while (pl.XP >= XpThreshold(pl.Level + 1))
+        {
+            pl.Level++;
+            string who = allPlayers.Count > 1 ? pl.Name : "You";
+            Console.WriteLine($"\n★★★ LEVEL UP! {who} {(allPlayers.Count > 1 ? "is" : "are")} now Level {pl.Level}! ★★★");
 
-        if (player.Level >= 2)
-        {
-            player.SavedStatPoints++;
-            Console.WriteLine($"  Stat point gained! (Total saved: {player.SavedStatPoints})");
-            SpendStatPoints(player);
-        }
+            if (pl.Level >= 2)
+            {
+                pl.SavedStatPoints++;
+                Console.WriteLine($"  Stat point gained! (Total saved: {pl.SavedStatPoints})");
+                SpendStatPoints(pl);
+            }
 
-        if (player.Level % 5 == 0)
-        {
-            player.GearPointsAvailable++;
-            Console.WriteLine($"  Gear point earned! (Level {player.Level} milestone)");
-            SpendGearPoints(player);
-        }
-        // Berserker: recalculate rage points on level-up
-        if (player.CharacterType == "Berserker")
-        {
-            int maxRage = 1 + (player.Level >= 2 ? (player.Level - 2) / 4 + 1 : 0);
-            if (player.RagePoints < maxRage) player.RagePoints = maxRage;
+            if (pl.Level % 5 == 0)
+            {
+                pl.GearPointsAvailable++;
+                Console.WriteLine($"  Gear point earned! (Level {pl.Level} milestone)");
+                SpendGearPoints(pl);
+            }
+            if (pl.CharacterType == "Berserker")
+            {
+                int maxRage = 1 + (pl.Level >= 2 ? (pl.Level - 2) / 4 + 1 : 0);
+                if (pl.RagePoints < maxRage) pl.RagePoints = maxRage;
+            }
         }
     }
 }
