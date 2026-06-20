@@ -494,14 +494,15 @@ void SelectCharacterType(Player p)
     }
     else if (chosen == "Priest")
     {
-        p.MaxDamage = 4; // 1-4 unarmed
-        Console.WriteLine("  Starting: unarmed (1-4 dmg)");
+        p.MinDamage = 1; p.MaxDamage = 4; // 1d4 unarmed
+        p.HeldWeapon = "Mace";
+        Console.WriteLine("  Starting: Mace (2d4 non-lethal) + unarmed 1d4");
         Console.WriteLine("  Prayers: Prayer of Healing (25ft heal), Forgiveness (30ft convert), Lord's Prayer (6ft AoE dmg)");
         Console.WriteLine("  All prayers scale every 3 levels from L2; Forgiveness also gains AoE/threshold every 4 levels from L2");
     }
     else if (chosen == "Martial Artist")
     {
-        p.MinDamage = 2; p.MaxDamage = 8; // unarmed 2d4
+        p.MinDamage = 1; p.MaxDamage = 6; // unarmed 1d6 base
         var arts = new[] { "Kehon", "Judo", "Taekwondo", "Chidia" };
         Console.WriteLine("\n  Pick your martial art:");
         Console.WriteLine("  [1] Kehon      — enemy enters/leaves range, KO, disarmed, or off-balance: instant free grapple");
@@ -514,7 +515,7 @@ void SelectCharacterType(Player p)
         if (int.TryParse(araw, out int aidx) && aidx >= 1 && aidx <= arts.Length) art = arts[aidx - 1];
         else { var am = arts.FirstOrDefault(a => a.StartsWith(araw, StringComparison.OrdinalIgnoreCase)); if (am != null) art = am; }
         p.AddFeat(art);
-        Console.WriteLine($"  Martial art: {art}!  Unarmed: 2d4 (×1 more every 3 levels past L2)");
+        Console.WriteLine($"  Martial art: {art}!  Unarmed: 1d6 + 2d4 bonus every 3 levels from L2");
         Console.WriteLine("  Bonus: +1d4 grapple dmg every 4 levels from L2; bonus melee/throw action every 3 levels from L2");
     }
 }
@@ -845,6 +846,7 @@ abstract class Enemy
     public int UnarmedMinDmg = 0, UnarmedMaxDmg = 0;
     public bool HasShield = false;
     public bool OffhandNonLethal = false;
+    public bool IsUndead = false;
     public bool ShieldLost = false;
     public int ArrowsInBody = 0;
 
@@ -2019,6 +2021,7 @@ class CombatSession
     {
         if (P.HeldWeapon == "Bow") { DoBowAttack(target); return; }
         if (P.HeldWeapon == "Wand") { DoWandAttack(target); return; }
+        if (P.HeldWeapon == "Mace") { DoMaceAttack(target); return; }
         // Modifiers
         bool usePower = false, useSunder = false, useDisarm = false, useSap = false;
         var mods = new List<string>();
@@ -2059,11 +2062,14 @@ class CombatSession
         }
         if (P.HasFeat("MMA")) { minDmg *= 2; maxDmg *= 2; }
         if (P.HasFeat("Giant's Strength") && P.HeldWeapon != "Ogre Club") { minDmg += 2; maxDmg += 1; }
-        // Martial Artist unarmed: 2d4 multiplied — +1 set every 3 levels past L2
-        if (P.CharacterType == "Martial Artist" && P.HeldWeapon == null)
+        // Martial Artist unarmed: 1d6 base + 2d4 per set, +1 set every 3 levels from L2
+        if (P.CharacterType == "Martial Artist" && P.HeldWeapon == null && P.Level >= 2)
         {
-            int maMult = 1 + (P.Level >= 2 ? (P.Level - 2) / 3 : 0);
-            minDmg *= maMult; maxDmg *= maMult;
+            int numSets = (P.Level - 2) / 3 + 1;
+            int maBonusDmg = 0;
+            for (int d = 0; d < numSets * 2; d++) maBonusDmg += Rng.Next(1, 5);
+            dmgBonus += maBonusDmg;
+            Console.WriteLine($"  Martial Artist: +{maBonusDmg} ({numSets * 2}d4) unarmed bonus!");
         }
 
         int brokenArmPenalty = P.BrokenLimbs.Count(l => l.Contains("Arm"));
@@ -2397,6 +2403,7 @@ class CombatSession
         "Hand Axe"       => (1, 6, 2, 8),
         "Battle Axe"     => (3, 9, 4, 12),
         "War Mace"       => (3, 9, 4, 14),
+        "Mace"           => (1, 6, 2, 8),
         "Staff"          => (1, 6, 2, 6),
         "Wand"           => (1, 6, 3, 4),
         _ => (0, 0, 0, 0)
@@ -2493,6 +2500,39 @@ class CombatSession
             if (!target.Alive) HandleKill(target);
         }
         else Console.WriteLine("  Wand MISS!");
+    }
+
+    void DoMaceAttack(Enemy target)
+    {
+        int atkRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+        int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
+        Console.WriteLine($"  MACE (non-lethal 2d4)! Roll {atkRoll} vs {target.Name}'s dodge {ddg}.");
+        if (atkRoll >= ddg && !EnemyBlocks(target, atkRoll))
+        {
+            int dmg = Rng.Next(1, 5) + Rng.Next(1, 5);
+            dmg = ReduceByToughHide(target, dmg);
+            if (dmg >= target.HP)
+            {
+                if (target.IsUndead)
+                {
+                    Console.WriteLine($"  Mace HIT! {dmg} dmg — undead take lethal damage! {target.Name} defeated!");
+                    target.HP -= dmg;
+                    HandleKill(target);
+                }
+                else
+                {
+                    Console.WriteLine($"  Mace HIT! {dmg} dmg → {target.Name} KNOCKED OUT!");
+                    target.HP -= dmg;
+                    KnockOut(target);
+                }
+            }
+            else
+            {
+                Console.WriteLine($"  Mace HIT! {dmg} dmg (non-lethal) → {target.Name} HP:{target.HP - dmg}/{target.MaxHP}");
+                target.HP -= dmg;
+            }
+        }
+        else Console.WriteLine("  Mace MISS!");
     }
 
     // ── GRAPPLE ───────────────────────────────────────────────────────────
