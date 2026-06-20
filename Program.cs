@@ -462,9 +462,20 @@ void LearnSpell(Player p)
 
 void AskName(Player p)
 {
-    Console.Write("\nEnter your name (or Enter for 'The Lone Warrior'): ");
-    string input = (Console.ReadLine() ?? "").Trim();
-    if (!string.IsNullOrEmpty(input)) p.Name = input;
+    Console.Write("\nFirst name (or Enter for 'The Lone Warrior'): ");
+    string first = (Console.ReadLine() ?? "").Trim();
+    if (string.IsNullOrEmpty(first)) { SelectCharacterType(p); return; }
+
+    Console.Write("Middle name (or Enter to skip): ");
+    string middle = (Console.ReadLine() ?? "").Trim();
+
+    Console.Write("Last name: ");
+    string last = (Console.ReadLine() ?? "").Trim();
+
+    p.Name = string.IsNullOrEmpty(middle)
+        ? $"{first} {last}".Trim()
+        : $"{first} {middle} {last}".Trim();
+
     SelectCharacterType(p);
 }
 
