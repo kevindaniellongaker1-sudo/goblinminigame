@@ -226,9 +226,12 @@ List<Enemy> BuildGroup(int waveNum, Random r)
         int ogres = Math.Min(waveNum - 40, 10);
         int trolls = Math.Max(0, 10 - ogres);
         for (int i = 0; i < trolls; i++) g.Add(new Troll(r, $"Troll {i + 1}"));
+        int companionRolls = 0;
         for (int i = 0; i < ogres; i++)
         {
             g.Add(new Ogre(r, $"Ogre {i + 1}"));
+            if (companionRolls >= 12) continue; // cap rolls, not group size
+            companionRolls++;
             int crMax = waveNum >= 71 ? 13 : waveNum >= 61 ? 11 : 9;
             int cr = r.Next(1, crMax);
             switch (cr)
@@ -247,7 +250,7 @@ List<Enemy> BuildGroup(int waveNum, Random r)
             }
         }
     }
-    return g.Count > 12 ? g.Take(12).ToList() : g;
+    return g;
 }
 
 string DescribeGroup(List<Enemy> g) =>

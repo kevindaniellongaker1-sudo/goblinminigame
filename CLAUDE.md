@@ -17,7 +17,7 @@ Development branch: `claude/todo-implementation-ymd2ro`
 - `Enemy.Alive` is a **computed property** (`HP > 0 && !Fled`) — never set it directly
 - `Enemy.Fled = true` to make an enemy flee (not `Alive = false`)
 - `GainXP(int xp)` iterates `allPlayers`; XP is × 0.9 per player when party > 1
-- Wave group is capped at **12 enemies** at spawn
+- Wave spawn makes at most **12 companion rolls** at group start; the group can still grow beyond 12 enemies from those rolls, and in-combat reinforcements (Pending) are unlimited
 
 ## Character types
 
