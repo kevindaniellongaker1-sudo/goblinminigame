@@ -636,6 +636,21 @@ void SelectCharacterType(Player p)
         Console.WriteLine("  Rage: spend rage points (+1 per 4 levels from L2) for +2d4/pt damage for 3 turns");
         Console.WriteLine("  Rage: survive at 0 HP while raging, heal 1d4 per rage point spent when rage fades");
     }
+
+    // Set starting HP by class
+    p.MaxHP = chosen switch
+    {
+        "Berserker"      => 12,
+        "Warrior"        => 10,
+        "Martial Artist" => 10,
+        "Duelist"        => 8,
+        "Archer"         => 8,
+        "Priest"         => 6,
+        "Mage"           => 6,
+        _                => 8,
+    };
+    p.HP = p.MaxHP;
+    Console.WriteLine($"  Starting HP: {p.HP}");
 }
 
 string GameSaveDir()
