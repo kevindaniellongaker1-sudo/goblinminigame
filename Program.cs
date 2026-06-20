@@ -31,8 +31,7 @@ void RunGameLogic(SharedGameState state)
 {
 
 var rng = new Random();
-var player = new Player(rng);
-var allPlayers = new List<Player> { player };
+var allPlayers = new List<Player>();
 int groupsDefeated = 0;
 
 Console.WriteLine("═══════════════════════════════════════════════════════");
@@ -41,65 +40,65 @@ Console.WriteLine("════════════════════�
 
 ShowHiscores();
 
-Console.WriteLine("\n[N]ew game  [L]oad saved game");
-Console.Write("Choice: ");
-string startChoice = (Console.ReadLine() ?? "n").Trim().ToLower();
-
-if (startChoice.StartsWith("l"))
-{
-    var saves = ListSaves();
-    if (!saves.Any())
-    {
-        Console.WriteLine("  No saved games found. Starting new game.");
-        AskName(player);
-    }
-    else
-    {
-        Console.WriteLine("\n── Saved Games ──");
-        for (int i = 0; i < saves.Count; i++)
-            Console.WriteLine($"  [{i + 1}] {saves[i].name,-22}  Wave {saves[i].wave,3}  Level {saves[i].level}");
-        Console.Write("Enter number or name to load (Enter = new game): ");
-        string pick = (Console.ReadLine() ?? "").Trim();
-
-        bool loaded = false;
-        if (int.TryParse(pick, out int idx) && idx >= 1 && idx <= saves.Count)
-            loaded = TryLoadGame(player, saves[idx - 1].path);
-        else if (!string.IsNullOrEmpty(pick))
-        {
-            var match = saves.FirstOrDefault(s => s.name.Equals(pick, StringComparison.OrdinalIgnoreCase));
-            if (match.path != null) loaded = TryLoadGame(player, match.path);
-        }
-
-        if (loaded)
-            Console.WriteLine($"  Loaded! Level {player.Level}, HP {player.HP}/{player.MaxHP}, Wave {groupsDefeated + 1}");
-        else
-        {
-            Console.WriteLine("  Starting new game.");
-            AskName(player);
-        }
-    }
-}
-else
-{
-    AskName(player);
-}
-
-// ── Number of players ─────────────────────────────────────────────────────
 Console.Write("\nHow many players? (1-4, default 1): ");
 int numPlayers = 1;
 if (int.TryParse((Console.ReadLine() ?? "").Trim(), out int npInput) && npInput >= 2 && npInput <= 4)
     numPlayers = npInput;
-for (int pi = 2; pi <= numPlayers; pi++)
+
+for (int pi = 1; pi <= numPlayers; pi++)
 {
-    var extra = new Player(rng);
-    Console.WriteLine($"\n── Player {pi} Setup ──");
-    AskName(extra);
-    allPlayers.Add(extra);
+    if (numPlayers > 1) Console.WriteLine($"\n══ Player {pi} ══");
+    var p = new Player(rng);
+
+    Console.WriteLine("[N]ew character  [L]oad saved character");
+    Console.Write("Choice: ");
+    string choice = (Console.ReadLine() ?? "n").Trim().ToLower();
+
+    if (choice.StartsWith("l"))
+    {
+        var saves = ListSaves();
+        if (!saves.Any())
+        {
+            Console.WriteLine("  No saves found. Creating new character.");
+            AskName(p);
+        }
+        else
+        {
+            Console.WriteLine("\n── Saved Characters ──");
+            for (int i = 0; i < saves.Count; i++)
+                Console.WriteLine($"  [{i + 1}] {saves[i].name,-22}  Wave {saves[i].wave,3}  Level {saves[i].level}");
+            Console.Write("Enter number or name (Enter = new character): ");
+            string pick = (Console.ReadLine() ?? "").Trim();
+            bool loaded = false;
+            if (int.TryParse(pick, out int idx) && idx >= 1 && idx <= saves.Count)
+                loaded = TryLoadGame(p, saves[idx - 1].path);
+            else if (!string.IsNullOrEmpty(pick))
+            {
+                var match = saves.FirstOrDefault(s => s.name.Equals(pick, StringComparison.OrdinalIgnoreCase));
+                if (match.path != null) loaded = TryLoadGame(p, match.path);
+            }
+            if (loaded)
+                Console.WriteLine($"  Loaded {p.Name}! Level {p.Level}, Wave {p.GroupsDefeated + 1}");
+            else
+            {
+                Console.WriteLine("  Starting new character.");
+                AskName(p);
+            }
+        }
+    }
+    else
+    {
+        AskName(p);
+    }
+    allPlayers.Add(p);
 }
 
-Console.WriteLine($"\nYou are {player.Name}!");
+var player = allPlayers[0];
+groupsDefeated = allPlayers.Min(p => p.GroupsDefeated);
+
+Console.WriteLine($"\nParty: {string.Join(", ", allPlayers.Select(p => p.Name))}");
 if (allPlayers.Count > 1)
-    Console.WriteLine($"Party: {string.Join(", ", allPlayers.Select(pl => pl.Name))}");
+    Console.WriteLine($"Starting at Wave {groupsDefeated + 1} (lowest character's progress).");
 Console.WriteLine($"HP: {player.HP}/{player.MaxHP}\n");
 
 if (player.PendingFeats > 0) SelectFeats(player);
@@ -137,7 +136,7 @@ while (true)
 
     if (session.PlayerFled)
     {
-        SaveGame(player, groupsDefeated);
+        foreach (var pl in allPlayers) SaveGame(pl, groupsDefeated);
         Console.WriteLine("  (Auto-saved after fleeing.)");
     }
 
@@ -149,7 +148,7 @@ while (true)
     if (next is "3" or "home" or "quit" or "q" or "go home")
     {
         Console.WriteLine($"\nYou return home! Groups defeated: {groupsDefeated}  Level: {player.Level}. Well done!");
-        SaveGame(player, groupsDefeated);
+        foreach (var pl in allPlayers) SaveGame(pl, groupsDefeated);
         break;
     }
     if (next is "2" or "rest" or "heal")
@@ -690,7 +689,7 @@ bool TryLoadGame(Player p, string filePath)
         p.RagePoints = I("RagePoints");
         p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
 
-        groupsDefeated = I("GroupsDefeated");
+        p.GroupsDefeated = I("GroupsDefeated");
         return true;
     }
     catch
@@ -836,6 +835,7 @@ class Player
     public bool IsRaging = false;
     public int RageTurnsLeft = 0;
     public int RagePointsSpent = 0;
+    public int GroupsDefeated = 0;
 
     public Player(Random rng)
     {
