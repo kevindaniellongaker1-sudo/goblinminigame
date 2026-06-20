@@ -1782,7 +1782,7 @@ class CombatSession
                             swDmg = ReduceByToughHide(swE, swDmg);
                             Console.WriteLine($"  Club hits {swE.Name} for {swDmg} dmg! HP:{swE.HP - swDmg}/{swE.MaxHP}");
                             swE.HP -= swDmg;
-                            if (!swE.Alive) HandleKill(swE);
+                            if (!swE.Alive) ResolveDowned(swE, true);
                         }
                     }
                     justBlocked = false;
@@ -2190,7 +2190,7 @@ class CombatSession
                     KnockOut(target); target.BleedDmg++;
                     Console.WriteLine($"  {target.Name} is also BLEEDING!"); break;
             }
-            if (!target.Alive) HandleKill(target);
+            if (!target.Alive) ResolveDowned(target, IsNonLethalAttack());
             return;
         }
 
@@ -2208,7 +2208,7 @@ class CombatSession
             else Console.WriteLine("  No bleed.");
         }
 
-        if (!target.Alive) { HandleKill(target); return; }
+        if (!target.Alive) { ResolveDowned(target, IsNonLethalAttack()); return; }
 
         // Slayer
         if (P.HasFeat("Slayer") && target.HP <= target.MaxHP / 3)
@@ -2310,6 +2310,20 @@ class CombatSession
         if (e.HP <= 0) e.HP = 1; // non-lethal: stays at 1 HP
         Console.WriteLine($"  {e.Name} KNOCKED OUT for {e.KOTurns} turns! (KO #{e.KOCount}: {minT}-{maxT}t range)");
         if (!e.XpAwarded) { e.XpAwarded = true; GainXP(e.XPValue); }
+    }
+
+    // Non-lethal weapons: unarmed, staff, club, mace, warhammer. These KO living
+    // enemies, but deal regular (lethal) damage to undead.
+    bool IsNonLethalAttack() =>
+        P.HeldWeapon is null or "Staff" or "Ogre Club" or "Mace" or "War Mace" or "Warhammer";
+
+    // Resolve a downed enemy: KO if the hit was non-lethal and the target is living,
+    // otherwise a regular kill (undead are always killed by non-lethal damage).
+    void ResolveDowned(Enemy target, bool nonLethal)
+    {
+        if (target.Alive) return;
+        if (nonLethal && !target.IsUndead) KnockOut(target);
+        else HandleKill(target);
     }
 
     void HandleKill(Enemy e)
