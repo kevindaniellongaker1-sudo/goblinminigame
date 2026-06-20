@@ -222,27 +222,23 @@ List<Enemy> BuildGroup(int waveNum, Random r)
     }
     else
     {
-        // Wave 41+: ogres replace trolls one-for-one; each ogre brings companions (1d8; 1d10 from wave 61+)
-        int ogres = Math.Min(waveNum - 40, 10);
-        int trolls = Math.Max(0, 10 - ogres);
+        // Wave 41+: each slot rolls to determine what spawns (ogre is one result, not guaranteed)
+        int slots = Math.Min(waveNum - 40, 10);
+        int trolls = Math.Max(0, 10 - slots);
         for (int i = 0; i < trolls; i++) g.Add(new Troll(r, $"Troll {i + 1}"));
-        int companionRolls = 0;
-        for (int i = 0; i < ogres; i++)
+        for (int i = 0; i < slots && i < 12; i++)
         {
-            g.Add(new Ogre(r, $"Ogre {i + 1}"));
-            if (companionRolls >= 12) continue; // cap rolls, not group size
-            companionRolls++;
             int crMax = waveNum >= 71 ? 13 : waveNum >= 61 ? 11 : 9;
             int cr = r.Next(1, crMax);
             switch (cr)
             {
-                case 1: g.Add(new Ogre(r, $"Ogre Extra {i + 1}")); break;
-                case 2: case 3: for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc Extra {i * 3 + j + 1}")); break;
-                case 4: g.Add(new Troll(r, $"Troll Extra A {i + 1}")); g.Add(new Troll(r, $"Troll Extra B {i + 1}")); break;
-                case 5: for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
-                case 6: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Gob Extra {i * 5 + j + 1}")); break;
-                case 7: if (waveNum >= 51) g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); else for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc Extra {i * 3 + j + 1}")); break;
-                case 8: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
+                case 1: case 2: g.Add(new Ogre(r, $"Ogre {i + 1}")); break;
+                case 3: for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc {i * 3 + j + 1}")); break;
+                case 4: g.Add(new Troll(r, $"Troll {i * 2 + 1}")); g.Add(new Troll(r, $"Troll {i * 2 + 2}")); break;
+                case 5: for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hobgoblin {i * 4 + j + 1}")); break;
+                case 6: for (int j = 0; j < 5; j++) g.Add(new Goblin(r, $"Goblin {i * 5 + j + 1}")); break;
+                case 7: if (waveNum >= 51) g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); else for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc {i * 3 + j + 1}")); break;
+                case 8: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hobgoblin {i * 4 + j + 1}")); break;
                 case 9: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i + 1}")); break;
                 case 11: g.Add(new NecromancerTroll(r, $"Necromancer Troll {i + 1}")); break;
                 case 12: g.Add(new NecromancerTroll(r, $"Necromancer Troll {i + 1}")); g.Add(new Troll(r, $"Troll Thrall {i + 1}")); break;
