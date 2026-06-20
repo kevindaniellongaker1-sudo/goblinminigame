@@ -199,7 +199,7 @@ List<Enemy> BuildGroup(int waveNum, Random r)
         for (int i = 0; i < ogres; i++)
         {
             g.Add(new Ogre(r, $"Ogre {i + 1}"));
-            int crMax = waveNum >= 61 ? 11 : 9;
+            int crMax = waveNum >= 71 ? 13 : waveNum >= 61 ? 11 : 9;
             int cr = r.Next(1, crMax);
             switch (cr)
             {
@@ -211,6 +211,8 @@ List<Enemy> BuildGroup(int waveNum, Random r)
                 case 7: if (waveNum >= 51) g.Add(new SpellGoblin(r, $"Spell Goblin {i + 1}")); else for (int j = 0; j < 3; j++) g.Add(new Orc(r, $"Orc Extra {i * 3 + j + 1}")); break;
                 case 8: if (waveNum >= 51) { g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 1}")); g.Add(new SpellGoblin(r, $"Spell Goblin {i*2 + 2}")); } else for (int j = 0; j < 4; j++) g.Add(new Hobgoblin(r, $"Hob Extra {i * 4 + j + 1}")); break;
                 case 9: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i + 1}")); break;
+                case 11: g.Add(new NecromancerTroll(r, $"Necromancer Troll {i + 1}")); break;
+                case 12: g.Add(new NecromancerTroll(r, $"Necromancer Troll {i + 1}")); g.Add(new Troll(r, $"Troll Thrall {i + 1}")); break;
                 default: g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 1}")); g.Add(new OrcBarbarian(r, $"Orc Barbarian {i*2 + 2}")); break;
             }
         }
@@ -981,6 +983,17 @@ class Troll : Enemy
     }
 }
 
+class NecromancerTroll : Troll
+{
+    public NecromancerTroll(Random rng, string name) : base(rng, name)
+    {
+        TypeName = "Necromancer Troll";
+        EquippedAxes = 0; SpareAxes = 0; // no axes — uses negative touch instead
+        MinDamage = 2; MaxDamage = 8;    // negative touch is 2d4
+        XPValue = 60;
+    }
+}
+
 class Ogre : Enemy
 {
     public Ogre(Random rng, string name) : base(name, "Ogre")
@@ -1638,11 +1651,31 @@ class CombatSession
 
                     if (pc == "1") // ── Prayer of Healing ─────────────────
                     {
-                        int heal = 0;
-                        for (int d = 0; d < healDice; d++) heal += Rng.Next(1, 7);
-                        heal = Math.Min(heal, P.MaxHP - P.HP);
-                        P.HP += heal;
-                        Console.WriteLine($"  Prayer of Healing! Restored {heal} HP. ({P.HP}/{P.MaxHP})");
+                        int roll = 0;
+                        for (int d = 0; d < healDice; d++) roll += Rng.Next(1, 7);
+
+                        // Healing energy harms undead — offer to smite a nearby undead instead of self-heal
+                        var undeadTargets = alive.Where(en => en.IsUndead && PlayerPos.Feet(en.Position) <= 25f).ToList();
+                        Enemy? smiteTarget = null;
+                        if (undeadTargets.Any())
+                        {
+                            Console.Write($"  Undead within 25ft! [S]mite an undead for {roll} radiant, or [H]eal self? ");
+                            if ((Console.ReadLine() ?? "").Trim().ToLower().StartsWith("s"))
+                                smiteTarget = undeadTargets.Count == 1 ? undeadTargets[0] : PickTarget(undeadTargets);
+                        }
+
+                        if (smiteTarget != null)
+                        {
+                            smiteTarget.HP -= roll;
+                            Console.WriteLine($"  Prayer of Healing SEARS {smiteTarget.Name} for {roll} radiant damage! HP:{smiteTarget.HP}/{smiteTarget.MaxHP}");
+                            if (!smiteTarget.Alive) HandleKill(smiteTarget);
+                        }
+                        else
+                        {
+                            int heal = Math.Min(roll, P.MaxHP - P.HP);
+                            P.HP += heal;
+                            Console.WriteLine($"  Prayer of Healing! Restored {heal} HP. ({P.HP}/{P.MaxHP})");
+                        }
                     }
                     else if (pc == "2") // ── Forgiveness ───────────────────
                     {
@@ -2489,6 +2522,51 @@ class CombatSession
         }
     }
 
+    // ── Necromancy ──────────────────────────────────────────────────────────
+
+    void RaiseDead(Enemy corpse, Enemy necro)
+    {
+        corpse.HP = corpse.MaxHP;
+        corpse.Alive = true;
+        corpse.IsUndead = true;
+        // Clear status effects and strip all feats / special abilities
+        corpse.KnockedOut = false; corpse.KnockedDown = false; corpse.OffBalance = false;
+        corpse.Disarmed = false; corpse.Grappled = false; corpse.Charmed = false;
+        corpse.CanMove = true; corpse.KOCount = 0; corpse.KOTurns = 0;
+        corpse.BleedDmg = 0; corpse.BurningDmg = 0; corpse.BurningTurns = 0;
+        corpse.FrostPenalty = 0; corpse.FrostTurns = 0;
+        corpse.HasDoubleTap = false; corpse.HasParry = false; corpse.HasBlock = false;
+        corpse.HasKick = false; corpse.HasArmBlock = false;
+        corpse.MagicResistant = false; corpse.MagicVulnerable = false;
+        corpse.ToughHideMin = 0; corpse.ToughHideMax = 0;
+        corpse.XpAwarded = false; // can be defeated again for XP
+        if (!corpse.Name.StartsWith("Undead ")) corpse.Name = "Undead " + corpse.Name;
+        corpse.TypeName = "Undead";
+        Console.WriteLine($"  {necro.Name} raises {corpse.Name} from the dead! (Undead — base stats, no special abilities. HP:{corpse.HP}/{corpse.MaxHP})");
+    }
+
+    void NecromancerHealUndead(Enemy necro, Enemy undead)
+    {
+        int heal = Rng.Next(1, 5) + Rng.Next(1, 5); // negative energy 2d4 heals undead
+        undead.HP = Math.Min(undead.MaxHP, undead.HP + heal);
+        Console.WriteLine($"  {necro.Name} channels negative energy into {undead.Name}: +{heal} HP ({undead.HP}/{undead.MaxHP}).");
+    }
+
+    void NecromancerTouchPlayer(Enemy necro)
+    {
+        int atk = Rng.Next(necro.MinAttack, necro.MaxAttack + 1) - necro.AttackPenalty - necro.FrostPenalty;
+        int ddg = Rng.Next(P.MinDodge, P.MaxDodge + 1);
+        Console.WriteLine($"  {necro.Name} reaches out with a NEGATIVE TOUCH! {atk} vs your dodge {ddg}.");
+        if (atk >= ddg)
+        {
+            int dmg = Rng.Next(1, 5) + Rng.Next(1, 5); // 2d4 necrotic
+            if (P.Defending) dmg = Math.Max(1, dmg / 2);
+            P.HP -= dmg;
+            Console.WriteLine($"  Negative touch HIT! {dmg} necrotic damage. HP:{P.HP}/{P.MaxHP}");
+        }
+        else Console.WriteLine("  Negative touch MISS!");
+    }
+
     void OpportunistPromptNote() => Console.WriteLine("  (Opportunist: attack them at end of turn!)");
 
     void OpportunistAttacks(List<Enemy> debuffed)
@@ -3207,6 +3285,37 @@ class CombatSession
                         else
                             MoveTowardPlayer(e, ref actions, suppressCost: true);
                     }
+                }
+                continue;
+            }
+
+            // ── Necromancer Troll AI ───────────────────────────────────────
+            if (e is NecromancerTroll)
+            {
+                // Troll regeneration
+                int nRegen = Rng.Next(2, 5);
+                e.HP = Math.Min(e.HP + nRegen, e.MaxHP);
+                Console.WriteLine($"  {e.Name} regenerates {nRegen} HP! (HP:{e.HP}/{e.MaxHP})");
+
+                for (int i = 0; i < actions && P.HP > 0; i++)
+                {
+                    // 1. Raise a nearby corpse (within 20ft) as undead
+                    var corpse = Active.FirstOrDefault(c =>
+                        c != e && !c.IsUndead && c.HP <= 0 &&
+                        c.Position.Feet(e.Position) <= 20f);
+                    if (corpse != null) { RaiseDead(corpse, e); continue; }
+
+                    // 2. Heal an adjacent injured undead with negative energy
+                    var woundedUndead = Active.FirstOrDefault(u =>
+                        u != e && u.IsUndead && u.HP < u.MaxHP &&
+                        u.Position.IsCardinalAdjacent(e.Position));
+                    if (woundedUndead != null) { NecromancerHealUndead(e, woundedUndead); continue; }
+
+                    // 3. Negative touch the player if adjacent
+                    if (e.Position.IsCardinalAdjacent(PlayerPos)) { NecromancerTouchPlayer(e); continue; }
+
+                    // 4. Otherwise close in
+                    MoveTowardPlayer(e, ref actions, suppressCost: true);
                 }
                 continue;
             }
