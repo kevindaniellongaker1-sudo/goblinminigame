@@ -199,44 +199,46 @@ List<Enemy> BuildGroup(int waveNum, Random r)
     }
     else if (waveNum <= 20)
     {
-        // Wave 11-20: each slot rolls — 1 goblin, 2 goblins, or 1 hobgoblin
+        // Wave 11-20: each slot rolls — 1 goblin, 2 goblins, or 1-2 hobgoblins
         int slots = waveNum - 10;
         int gn = 1, hn = 1;
         for (int i = 0; i < slots; i++)
         {
-            switch (r.Next(1, 4))
+            switch (r.Next(1, 5))
             {
                 case 1: g.Add(new Goblin(r, $"Goblin {gn++}")); break;
                 case 2: g.Add(new Goblin(r, $"Goblin {gn++}")); g.Add(new Goblin(r, $"Goblin {gn++}")); break;
                 case 3: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
+                case 4: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
             }
         }
     }
     else if (waveNum <= 30)
     {
-        // Wave 21-30: adds 2 hobgoblins or 1 orc to the roll table
+        // Wave 21-30: adds 2 hobgoblins, 1 orc, or 2 orcs to the roll table
         int slots = 10;
         int gn = 1, hn = 1, on = 1;
         for (int i = 0; i < slots; i++)
         {
-            switch (r.Next(1, 6))
+            switch (r.Next(1, 7))
             {
                 case 1: g.Add(new Goblin(r, $"Goblin {gn++}")); break;
                 case 2: g.Add(new Goblin(r, $"Goblin {gn++}")); g.Add(new Goblin(r, $"Goblin {gn++}")); break;
                 case 3: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
                 case 4: g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); g.Add(new Hobgoblin(r, $"Hobgoblin {hn++}")); break;
                 case 5: g.Add(new Orc(r, $"Orc {on++}")); break;
+                case 6: g.Add(new Orc(r, $"Orc {on++}")); break;
             }
         }
     }
     else if (waveNum <= 40)
     {
-        // Wave 31-40: adds 2 orcs or 1 troll to the roll table
+        // Wave 31-40: adds 2 orcs, 1 troll, or 2 trolls to the roll table
         int slots = 10;
         int gn = 1, hn = 1, on = 1, tn = 1;
         for (int i = 0; i < slots; i++)
         {
-            switch (r.Next(1, 8))
+            switch (r.Next(1, 9))
             {
                 case 1: g.Add(new Goblin(r, $"Goblin {gn++}")); break;
                 case 2: g.Add(new Goblin(r, $"Goblin {gn++}")); g.Add(new Goblin(r, $"Goblin {gn++}")); break;
@@ -245,6 +247,7 @@ List<Enemy> BuildGroup(int waveNum, Random r)
                 case 5: g.Add(new Orc(r, $"Orc {on++}")); break;
                 case 6: g.Add(new Orc(r, $"Orc {on++}")); g.Add(new Orc(r, $"Orc {on++}")); break;
                 case 7: g.Add(new Troll(r, $"Troll {tn++}")); break;
+                case 8: g.Add(new Troll(r, $"Troll {tn++}")); break;
             }
         }
     }
