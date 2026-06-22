@@ -526,7 +526,7 @@ void AskName(Player p)
 {
     Console.Write("\nFirst name (or Enter for 'The Lone Warrior'): ");
     string first = (Console.ReadLine() ?? "").Trim();
-    if (string.IsNullOrEmpty(first)) { SelectCharacterType(p); return; }
+    if (string.IsNullOrEmpty(first)) { SelectRace(p); return; }
 
     Console.Write("Middle name (or Enter to skip): ");
     string middle = (Console.ReadLine() ?? "").Trim();
@@ -538,7 +538,107 @@ void AskName(Player p)
         ? $"{first} {last}".Trim()
         : $"{first} {middle} {last}".Trim();
 
+    SelectRace(p);
+}
+
+void SelectRace(Player p)
+{
+    var races = new[]
+    {
+        "Moon Elf", "Human", "Stone Dwarf", "Light-Foot Hobbit",
+        "Sun Elf", "Wood Elf", "Orc", "Goblin", "Troll", "Iron Dwarf", "Brave Minds Hobbit"
+    };
+    Console.WriteLine("\nChoose your race:");
+    Console.WriteLine("  [1]  Moon Elf          — +3 spell damage");
+    Console.WriteLine("  [2]  Human             — pick a bonus feat");
+    Console.WriteLine("  [3]  Stone Dwarf       — double starting HP");
+    Console.WriteLine("  [4]  Light-Foot Hobbit — +3 dodge");
+    Console.WriteLine("  [5]  Sun Elf           — +3 healing on prayers");
+    Console.WriteLine("  [6]  Wood Elf          — +3 attack");
+    Console.WriteLine("  [7]  Orc               — +3 melee damage");
+    Console.WriteLine("  [8]  Goblin            — +1 dodge, +1 movement");
+    Console.WriteLine("  [9]  Troll             — regenerate 2 HP per turn");
+    Console.WriteLine("  [10] Iron Dwarf        — -3 damage taken");
+    Console.WriteLine("  [11] Brave Minds Hobbit — +1 dodge, +1 attack, -1 damage taken");
+    Console.Write("  Choice (1-11 or name): ");
+    string raw = (Console.ReadLine() ?? "").Trim();
+    string chosen = "Human";
+    if (int.TryParse(raw, out int ridx) && ridx >= 1 && ridx <= races.Length)
+        chosen = races[ridx - 1];
+    else
+    {
+        var match = races.FirstOrDefault(r => r.StartsWith(raw, StringComparison.OrdinalIgnoreCase));
+        if (match != null) chosen = match;
+    }
+    p.Race = chosen;
+    Console.WriteLine($"  You are a {chosen}!");
+
+    // Class selection first so Stone Dwarf can double the class-set HP
     SelectCharacterType(p);
+
+    switch (chosen)
+    {
+        case "Moon Elf":
+            p.SpellDamageBonus = 3;
+            Console.WriteLine("  [Race] Moon Elf: +3 spell damage.");
+            break;
+        case "Human":
+        {
+            Console.WriteLine("  [Race] Human: choose a bonus feat.");
+            var available = FeatDef.All
+                .Where(f => f.Prerequisite == null && !p.Feats.Contains(f.Name))
+                .ToList();
+            for (int fi = 0; fi < available.Count; fi++)
+                Console.WriteLine($"    [{fi + 1}] {available[fi].Name} — {available[fi].Desc}");
+            Console.Write($"  Choice (1-{available.Count}): ");
+            if (int.TryParse((Console.ReadLine() ?? "").Trim(), out int fc) && fc >= 1 && fc <= available.Count)
+            {
+                p.AddFeat(available[fc - 1].Name);
+                Console.WriteLine($"  Gained feat: {available[fc - 1].Name}!");
+            }
+            break;
+        }
+        case "Stone Dwarf":
+            p.MaxHP *= 2;
+            p.HP = p.MaxHP;
+            Console.WriteLine($"  [Race] Stone Dwarf: HP doubled to {p.MaxHP}!");
+            break;
+        case "Light-Foot Hobbit":
+            p.MaxDodge += 3;
+            Console.WriteLine($"  [Race] Light-Foot Hobbit: +3 dodge (max {p.MaxDodge}).");
+            break;
+        case "Sun Elf":
+            p.PrayerHealBonus = 3;
+            Console.WriteLine("  [Race] Sun Elf: +3 to prayer healing.");
+            break;
+        case "Wood Elf":
+            p.MaxAttack += 3;
+            Console.WriteLine($"  [Race] Wood Elf: +3 attack (max {p.MaxAttack}).");
+            break;
+        case "Orc":
+            p.MaxDamage += 3;
+            Console.WriteLine($"  [Race] Orc: +3 melee damage (max {p.MaxDamage}).");
+            break;
+        case "Goblin":
+            p.MaxDodge += 1;
+            p.MovementBonus = 1;
+            Console.WriteLine("  [Race] Goblin: +1 dodge, +1 movement per roll.");
+            break;
+        case "Troll":
+            p.RegenPerTurn = 2;
+            Console.WriteLine("  [Race] Troll: regenerate 2 HP per turn.");
+            break;
+        case "Iron Dwarf":
+            p.ArmorDamageReduction += 3;
+            Console.WriteLine($"  [Race] Iron Dwarf: -{p.ArmorDamageReduction} incoming damage.");
+            break;
+        case "Brave Minds Hobbit":
+            p.MaxDodge += 1;
+            p.MaxAttack += 1;
+            p.ArmorDamageReduction += 1;
+            Console.WriteLine("  [Race] Brave Minds Hobbit: +1 dodge, +1 attack, -1 damage taken.");
+            break;
+    }
 }
 
 void SelectCharacterType(Player p)
@@ -707,6 +807,11 @@ void SaveGame(Player p, int groups)
         $"AxeCount={p.AxeCount}",
         $"RagePoints={p.RagePoints}",
         $"SecondaryWeapon={p.SecondaryWeapon ?? ""}",
+        $"Race={p.Race}",
+        $"SpellDamageBonus={p.SpellDamageBonus}",
+        $"PrayerHealBonus={p.PrayerHealBonus}",
+        $"RegenPerTurn={p.RegenPerTurn}",
+        $"MovementBonus={p.MovementBonus}",
         $"GroupsDefeated={groups}",
     };
     File.WriteAllLines(path, lines);
@@ -766,6 +871,11 @@ bool TryLoadGame(Player p, string filePath)
         p.AxeCount = I("AxeCount");
         p.RagePoints = I("RagePoints");
         p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
+        p.Race = G("Race") is { Length: > 0 } rc ? rc : "Human";
+        p.SpellDamageBonus = I("SpellDamageBonus");
+        p.PrayerHealBonus = I("PrayerHealBonus");
+        p.RegenPerTurn = I("RegenPerTurn");
+        p.MovementBonus = I("MovementBonus");
 
         p.GroupsDefeated = I("GroupsDefeated");
         return true;
@@ -909,6 +1019,11 @@ class Player
     public Dictionary<string, int> DuelistEffectTurns = new();
     public List<string> BrokenLimbs = new();
     public string CharacterType = "Warrior";
+    public string Race = "Human";
+    public int SpellDamageBonus = 0;
+    public int PrayerHealBonus = 0;
+    public int RegenPerTurn = 0;
+    public int MovementBonus = 0;
     public int RagePoints = 0;
     public bool IsRaging = false;
     public int RageTurnsLeft = 0;
@@ -1290,6 +1405,12 @@ class CombatSession
                     ap.FrostTurns--;
                     if (ap.FrostTurns <= 0) { ap.FrostPenalty = 0; Console.WriteLine($"  The frost clears from {ap.Name}'s limbs."); }
                 }
+                if (ap.RegenPerTurn > 0 && ap.HP > 0 && ap.HP < ap.MaxHP)
+                {
+                    int regen = Math.Min(ap.RegenPerTurn, ap.MaxHP - ap.HP);
+                    ap.HP += regen;
+                    Console.WriteLine($"  {ap.Name} regenerates {regen} HP. ({ap.HP}/{ap.MaxHP})");
+                }
             }
 
             // Arrive reinforcements
@@ -1570,7 +1691,7 @@ class CombatSession
                 case "move":
                 {
                     if (P.IsGrappled) { Console.WriteLine("  You can't move while grappled!"); continue; }
-                    int moveRoll = Rng.Next(1, 7);
+                    int moveRoll = Rng.Next(1, 7) + P.MovementBonus;
                     Console.Write($"  Move roll: {moveRoll} squares. Direction [N/S/E/W]: ");
                     string dir = (Console.ReadLine() ?? "").Trim().ToLower();
                     int mdx = dir.StartsWith("e") ? 1 : dir.StartsWith("w") ? -1 : 0;
@@ -1805,7 +1926,7 @@ class CombatSession
 
                     if (pc == "1") // ── Prayer of Healing ─────────────────
                     {
-                        int roll = 0;
+                        int roll = P.PrayerHealBonus;
                         for (int d = 0; d < healDice; d++) roll += Rng.Next(1, 7);
 
                         // Healing energy harms undead — offer to smite a nearby undead instead of self-heal
@@ -3071,7 +3192,7 @@ class CombatSession
                 int burnTurns = Rng.Next(4, 9);
                 foreach (var e in targets)
                 {
-                    int dmg = Rng.Next(4, 13);
+                    int dmg = Rng.Next(4, 13) + P.SpellDamageBonus;
                     if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
                     else if (e.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
                     e.HP -= dmg; e.HitBySpell = true;
@@ -3095,7 +3216,7 @@ class CombatSession
                 int jumpCount = 0;
                 while (cur != null && jumpCount < 20)
                 {
-                    int dmg = Rng.Next(3, 7);
+                    int dmg = Rng.Next(3, 7) + P.SpellDamageBonus;
                     if (cur.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
                     else if (cur.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
                     cur.HP -= dmg; cur.HitBySpell = true; hit.Add(cur);
@@ -3147,7 +3268,7 @@ class CombatSession
                 int frostTurns = Rng.Next(2, 7);
                 foreach (var e in targets)
                 {
-                    int dmg = Rng.Next(2, 9);
+                    int dmg = Rng.Next(2, 9) + P.SpellDamageBonus;
                     if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
                     else if (e.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
                     e.HP -= dmg; e.HitBySpell = true;
@@ -3174,7 +3295,7 @@ class CombatSession
                 var abTarget = PickTarget(inRange);
                 if (abTarget == null) break;
                 float abFeet = PlayerPos.Feet(abTarget.Position);
-                int abDmg = Rng.Next(2, 7);
+                int abDmg = Rng.Next(2, 7) + P.SpellDamageBonus;
                 for (int ui = 0; ui < upgrades; ui++) abDmg += Rng.Next(1, 7);
                 if (abTarget.MagicResistant) { abDmg = Math.Max(1, abDmg / 2); Console.WriteLine("    (Magic resistant!)"); }
                 else if (abTarget.MagicVulnerable) { abDmg = (int)(abDmg * 1.5); Console.WriteLine("    (Magic vulnerable! ×1.5)"); }

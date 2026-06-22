@@ -21,15 +21,33 @@ Development branch: `claude/todo-implementation-ymd2ro`
 
 ## Character types
 
-| Type | Weapon | Special |
-|---|---|---|
-| Mage | Wand + Staff | Air Blade, Air Wave |
-| Priest | Unarmed | Prayers: Healing, Forgiveness, Lord's Prayer |
-| Warrior | 2× Hand Axe | Bonus actions scale with level |
-| Duelist | Rapier + daggers | Duelist Points, special actions |
-| Archer | Bow + Short Sword | 50 arrows, arrow crafting |
-| Martial Artist | Unarmed | Martial art style, grapple/throw |
-| Berserker | Great Axe | Whirlwind spin, Rage (survive lethal hits, heal after rage) |
+| Type | Starting HP | Weapon | Special |
+|---|---|---|---|
+| Mage | 6 | Wand + Staff | Air Blade, Air Wave |
+| Priest | 6 | Unarmed | Prayers: Healing, Forgiveness, Lord's Prayer |
+| Warrior | 10 | 2× Hand Axe | Bonus actions scale with level |
+| Duelist | 8 | Rapier + daggers | Duelist Points, special actions |
+| Archer | 8 | Bow + Short Sword | 50 arrows, arrow crafting |
+| Martial Artist | 10 | Unarmed | Martial art style, grapple/throw |
+| Berserker | 12 | Great Axe | Whirlwind spin, Rage (survive lethal hits, heal after rage) |
+
+## Races
+
+| Race | Bonus |
+|---|---|
+| Moon Elf | +3 spell damage per hit |
+| Human | Pick one bonus feat at creation |
+| Stone Dwarf | Double starting HP |
+| Light-Foot Hobbit | +3 max dodge |
+| Sun Elf | +3 to Prayer of Healing rolls |
+| Wood Elf | +3 max attack |
+| Orc | +3 max melee damage |
+| Goblin | +1 max dodge, +1 movement per roll |
+| Troll | Regenerate 2 HP per combat turn |
+| Iron Dwarf | -3 incoming damage (stacks with armor) |
+| Brave Minds Hobbit | +1 dodge, +1 attack, -1 damage taken |
+
+Race is chosen at character creation (`SelectRace` → calls `SelectCharacterType`). Stats are saved/loaded via `Race`, `SpellDamageBonus`, `PrayerHealBonus`, `RegenPerTurn`, `MovementBonus` fields on `Player`.
 
 ## Enemy roster
 
@@ -74,13 +92,11 @@ Undead always take lethal damage. `IsNonLethalAttack()` + `ResolveDowned()` cent
 
 ## Suggestions for next session
 
-- **Multiplayer combat turns**: currently only player 1 fights; consider adding turn-taking so each player acts in sequence per round
-- **Rest between waves heals all party members**, not just player 1
-- **Undead weaknesses**: add a system where holy/fire damage deals bonus damage to undead (Priest prayers already partially do this via radiant smite)
+- **Race display**: show race name next to HP in the combat status line
+- **Race-restricted gear/feats**: e.g. Troll race can't wear certain armor; Hobbit races get small-size bonuses to hiding
+- **Undead weaknesses**: holy/fire deals bonus damage to undead (Priest prayers already do radiant smite)
 - **Troll ally**: after wave 50+, could a reformed troll join the party as a temporary ally?
 - **Goblin variants**: sniper goblin (ranged), shaman goblin (buffs allies), bomb goblin (AoE on death)
-- **Difficulty scaling after wave 70**: group composition feels thin — consider adding elite versions of existing enemies with bonus feats
+- **Difficulty scaling after wave 70**: group composition feels thin — elite versions of existing enemies with bonus feats
 - **Equipment drops**: enemies could drop usable items (potions, weapons) with some probability
-- **Berserker whirlwind**: verify that the hit count scales correctly every 3 levels starting at level 2
-- **Status display**: during combat, show all party members' HP/level in the header line (currently only shows player 1)
-- **Save on level-up**: auto-save after a level-up so progress is never lost mid-session
+- **Berserker whirlwind**: verify hit count scales correctly every 3 levels starting at level 2
