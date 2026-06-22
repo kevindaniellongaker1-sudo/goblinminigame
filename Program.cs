@@ -547,7 +547,7 @@ void SelectRace(Player p)
     {
         "Moon Elf", "Human", "Stone Dwarf", "Light-Foot Hobbit",
         "Sun Elf", "Wood Elf", "Orc", "Goblin", "Troll", "Iron Dwarf", "Brave Minds Hobbit",
-        "Gem Gnome"
+        "Gem Gnome", "Glass Gnome"
     };
     Console.WriteLine("\nChoose your race:");
     Console.WriteLine("  [1]  Moon Elf          — +3 spell damage");
@@ -562,7 +562,8 @@ void SelectRace(Player p)
     Console.WriteLine("  [10] Iron Dwarf        — -3 damage taken");
     Console.WriteLine("  [11] Brave Minds Hobbit — +1 dodge, +1 attack, -1 damage taken");
     Console.WriteLine("  [12] Gem Gnome          — +1 movement, +2 to hit with spells");
-    Console.Write("  Choice (1-12 or name): ");
+    Console.WriteLine("  [13] Glass Gnome        — +1 min attack, +1 movement; spell targets may half-dodge");
+    Console.Write("  Choice (1-13 or name): ");
     string raw = (Console.ReadLine() ?? "").Trim();
     string chosen = "Human";
     if (int.TryParse(raw, out int ridx) && ridx >= 1 && ridx <= races.Length)
@@ -644,6 +645,11 @@ void SelectRace(Player p)
             p.MovementBonus += 1;
             p.SpellAttackBonus = 2;
             Console.WriteLine("  [Race] Gem Gnome: +1 movement, +2 to hit with spells.");
+            break;
+        case "Glass Gnome":
+            p.MinAttack += 1;
+            p.MovementBonus += 1;
+            Console.WriteLine("  [Race] Glass Gnome: +1 min attack, +1 movement; spells can be half-dodged.");
             break;
     }
 }
@@ -3182,6 +3188,15 @@ class CombatSession
 
     void DoSpell(string spell, List<Enemy> alive)
     {
+        // Spell dodge: enemy rolls dodge vs 1d6; success → half damage
+        int SpellDodgeCheck(Enemy e, int dmg)
+        {
+            int sAtk = Rng.Next(1, 7);
+            int eDdg = Rng.Next(e.MinDodge, e.MaxDodge + 1) - e.DodgePenalty;
+            if (eDdg >= sAtk) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Spell dodged! {e.Name} takes half: {dmg})"); }
+            return dmg;
+        }
+
         switch (spell)
         {
             case "Fire Blast":
@@ -3205,6 +3220,7 @@ class CombatSession
                     int dmg = Rng.Next(4, 13) + P.SpellDamageBonus;
                     if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
                     else if (e.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
+                    dmg = SpellDodgeCheck(e, dmg);
                     e.HP -= dmg; e.HitBySpell = true;
                     Console.WriteLine($"    {e.Name} takes {dmg} fire damage! HP:{e.HP}/{e.MaxHP}");
                     if (!e.Alive) { HandleKill(e); continue; }
@@ -3229,6 +3245,7 @@ class CombatSession
                     int dmg = Rng.Next(3, 7) + P.SpellDamageBonus;
                     if (cur.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
                     else if (cur.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
+                    dmg = SpellDodgeCheck(cur, dmg);
                     cur.HP -= dmg; cur.HitBySpell = true; hit.Add(cur);
                     Console.WriteLine($"    {cur.Name} struck for {dmg} lightning! HP:{cur.HP}/{cur.MaxHP}");
                     if (!cur.Alive) HandleKill(cur);
@@ -3281,6 +3298,7 @@ class CombatSession
                     int dmg = Rng.Next(2, 9) + P.SpellDamageBonus;
                     if (e.MagicResistant) { dmg = Math.Max(1, dmg / 2); Console.WriteLine($"    (Magic resistant!)"); }
                     else if (e.MagicVulnerable) { dmg = (int)(dmg * 1.5); Console.WriteLine($"    (Magic vulnerable! ×1.5)"); }
+                    dmg = SpellDodgeCheck(e, dmg);
                     e.HP -= dmg; e.HitBySpell = true;
                     Console.WriteLine($"    {e.Name} takes {dmg} frost! HP:{e.HP}/{e.MaxHP}");
                     if (!e.Alive) { HandleKill(e); continue; }
@@ -3309,6 +3327,7 @@ class CombatSession
                 for (int ui = 0; ui < upgrades; ui++) abDmg += Rng.Next(1, 7);
                 if (abTarget.MagicResistant) { abDmg = Math.Max(1, abDmg / 2); Console.WriteLine("    (Magic resistant!)"); }
                 else if (abTarget.MagicVulnerable) { abDmg = (int)(abDmg * 1.5); Console.WriteLine("    (Magic vulnerable! ×1.5)"); }
+                abDmg = SpellDodgeCheck(abTarget, abDmg);
                 abTarget.HP -= abDmg; abTarget.HitBySpell = true;
                 Console.WriteLine($"  AIR BLADE! ({abFeet:F0}ft) {abTarget.Name} struck for {abDmg} slashing damage! HP:{abTarget.HP}/{abTarget.MaxHP}");
                 if (!abTarget.Alive) HandleKill(abTarget);
