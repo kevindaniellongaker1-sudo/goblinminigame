@@ -546,7 +546,8 @@ void SelectRace(Player p)
     var races = new[]
     {
         "Moon Elf", "Human", "Stone Dwarf", "Light-Foot Hobbit",
-        "Sun Elf", "Wood Elf", "Orc", "Goblin", "Troll", "Iron Dwarf", "Brave Minds Hobbit"
+        "Sun Elf", "Wood Elf", "Orc", "Goblin", "Troll", "Iron Dwarf", "Brave Minds Hobbit",
+        "Gem Gnome"
     };
     Console.WriteLine("\nChoose your race:");
     Console.WriteLine("  [1]  Moon Elf          — +3 spell damage");
@@ -560,7 +561,8 @@ void SelectRace(Player p)
     Console.WriteLine("  [9]  Troll             — regenerate 2 HP per turn");
     Console.WriteLine("  [10] Iron Dwarf        — -3 damage taken");
     Console.WriteLine("  [11] Brave Minds Hobbit — +1 dodge, +1 attack, -1 damage taken");
-    Console.Write("  Choice (1-11 or name): ");
+    Console.WriteLine("  [12] Gem Gnome          — +1 movement, +2 to hit with spells");
+    Console.Write("  Choice (1-12 or name): ");
     string raw = (Console.ReadLine() ?? "").Trim();
     string chosen = "Human";
     if (int.TryParse(raw, out int ridx) && ridx >= 1 && ridx <= races.Length)
@@ -637,6 +639,11 @@ void SelectRace(Player p)
             p.MaxAttack += 1;
             p.ArmorDamageReduction += 1;
             Console.WriteLine("  [Race] Brave Minds Hobbit: +1 dodge, +1 attack, -1 damage taken.");
+            break;
+        case "Gem Gnome":
+            p.MovementBonus += 1;
+            p.SpellAttackBonus = 2;
+            Console.WriteLine("  [Race] Gem Gnome: +1 movement, +2 to hit with spells.");
             break;
     }
 }
@@ -809,6 +816,7 @@ void SaveGame(Player p, int groups)
         $"SecondaryWeapon={p.SecondaryWeapon ?? ""}",
         $"Race={p.Race}",
         $"SpellDamageBonus={p.SpellDamageBonus}",
+        $"SpellAttackBonus={p.SpellAttackBonus}",
         $"PrayerHealBonus={p.PrayerHealBonus}",
         $"RegenPerTurn={p.RegenPerTurn}",
         $"MovementBonus={p.MovementBonus}",
@@ -873,6 +881,7 @@ bool TryLoadGame(Player p, string filePath)
         p.SecondaryWeapon = G("SecondaryWeapon") is { Length: > 0 } sw2 ? sw2 : null;
         p.Race = G("Race") is { Length: > 0 } rc ? rc : "Human";
         p.SpellDamageBonus = I("SpellDamageBonus");
+        p.SpellAttackBonus = I("SpellAttackBonus");
         p.PrayerHealBonus = I("PrayerHealBonus");
         p.RegenPerTurn = I("RegenPerTurn");
         p.MovementBonus = I("MovementBonus");
@@ -1021,6 +1030,7 @@ class Player
     public string CharacterType = "Warrior";
     public string Race = "Human";
     public int SpellDamageBonus = 0;
+    public int SpellAttackBonus = 0;
     public int PrayerHealBonus = 0;
     public int RegenPerTurn = 0;
     public int MovementBonus = 0;
@@ -3024,7 +3034,7 @@ class CombatSession
         float feet = PlayerPos.Feet(target.Position);
         if (feet < 20f) { Console.WriteLine($"  Too close for wand! ({feet:F1}ft, min 20ft)"); return; }
         if (feet > 50f) { Console.WriteLine($"  Too far for wand! ({feet:F1}ft, max 50ft)"); return; }
-        int atkRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1);
+        int atkRoll = Rng.Next(P.MinAttack, P.MaxAttack + 1) + P.SpellAttackBonus;
         int ddg = Rng.Next(target.MinDodge, target.MaxDodge + 1) - target.DodgePenalty;
         Console.WriteLine($"  WAND ({feet:F0}ft, dmg 3-4)! Roll {atkRoll} vs {target.Name}'s dodge {ddg}.");
         if (atkRoll >= ddg)
