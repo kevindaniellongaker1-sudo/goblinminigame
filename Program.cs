@@ -764,6 +764,11 @@ void SelectCharacterType(Player p)
     };
     p.HP = p.MaxHP;
     Console.WriteLine($"  Starting HP: {p.HP}");
+
+    // 12 points to spend on stats at character creation
+    p.SavedStatPoints = 12;
+    Console.WriteLine("\n  You have 12 points to spend on starting stats!");
+    SpendStatPoints(p);
 }
 
 string GameSaveDir()
